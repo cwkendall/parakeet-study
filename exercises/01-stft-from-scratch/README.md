@@ -1,5 +1,10 @@
 # Exercise 1 — STFT and mel filterbank from scratch
 
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/cwkendall/parakeet-study/blob/main/exercises/01-stft-from-scratch/explore.ipynb) [![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/cwkendall/parakeet-study/main?labpath=exercises%2F01-stft-from-scratch%2Fexplore.ipynb)
+
+> ▶️ **Prefer a notebook?** Open the runnable `explore.ipynb` companion (the full reference solution, broken into steps with plots) in Colab or Binder above, or locally with `jupyter lab explore.ipynb`.
+
+
 **Time budget:** 1–2 hours.
 **Prerequisites:** Chapters 4–8 of the deep-dive (`../../index.html#ch-digital` through `#ch-preproc`).
 **Builds:** the exact preprocessing block that sits in front of every Parakeet model.

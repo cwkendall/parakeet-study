@@ -1,5 +1,10 @@
 # Exercise 5 — Convert your CTC model to RNN-T
 
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/cwkendall/parakeet-study/blob/main/exercises/05-convert-to-rnnt/explore.ipynb)
+
+> ▶️ **Run on a free GPU.** Open the `explore.ipynb` companion in Colab (then **Runtime → Change runtime type → GPU**); it clones the repo and runs these scripts step by step. See also [`../CLOUD_GPU_SETUP.md`](../CLOUD_GPU_SETUP.md).
+
+
 **Time budget:** ~1 day on the same GPU as exercise 4.
 **Prerequisites:** exercise 4 completed (you should have a checkpoint at `../04-train-fastconformer-ctc/lightning_logs/...`).
 **Builds:** the same encoder + a prediction network + a joint network + RNN-T loss. Same data, same encoder, different head.

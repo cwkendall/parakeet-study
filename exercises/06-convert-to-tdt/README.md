@@ -1,5 +1,10 @@
 # Exercise 6 — Convert your RNN-T model to TDT
 
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/cwkendall/parakeet-study/blob/main/exercises/06-convert-to-tdt/explore.ipynb)
+
+> ▶️ **Run on a free GPU.** Open the `explore.ipynb` companion in Colab (then **Runtime → Change runtime type → GPU**); it clones the repo and runs these scripts step by step. See also [`../CLOUD_GPU_SETUP.md`](../CLOUD_GPU_SETUP.md).
+
+
 **Time budget:** ~1 weekend on the same GPU as exercises 4 & 5.
 **Prerequisites:** exercise 5 completed.
 **Builds:** the TDT variant of your transducer — the exact decoder family Parakeet-TDT uses. By the end you can quote, from your own measurements, the speedup TDT gives over RNN-T at equal WER.

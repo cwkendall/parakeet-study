@@ -1,5 +1,10 @@
 # Exercise 2 — CTC from scratch
 
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/cwkendall/parakeet-study/blob/main/exercises/02-ctc-from-scratch/explore.ipynb) [![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/cwkendall/parakeet-study/main?labpath=exercises%2F02-ctc-from-scratch%2Fexplore.ipynb)
+
+> ▶️ **Prefer a notebook?** Open the runnable `explore.ipynb` companion (the full reference solution, broken into steps with plots) in Colab or Binder above, or locally with `jupyter lab explore.ipynb`.
+
+
 **Time budget:** ~1 day.
 **Prerequisites:** chapter 21 of the deep-dive (`../../index.html#ch-ctc`) and the Awni Hannun *Distill* article (linked at the bottom of that chapter).
 **Builds:** the CTC loss function and the two most common CTC decoders.

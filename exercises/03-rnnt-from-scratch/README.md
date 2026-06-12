@@ -1,5 +1,10 @@
 # Exercise 3 — RNN-Transducer from scratch
 
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/cwkendall/parakeet-study/blob/main/exercises/03-rnnt-from-scratch/explore.ipynb) [![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/cwkendall/parakeet-study/main?labpath=exercises%2F03-rnnt-from-scratch%2Fexplore.ipynb)
+
+> ▶️ **Prefer a notebook?** Open the runnable `explore.ipynb` companion (the full reference solution, broken into steps with plots) in Colab or Binder above, or locally with `jupyter lab explore.ipynb`.
+
+
 **Time budget:** ~1 day.
 **Prerequisites:** chapter 22 (`../../index.html#ch-rnnt`) and exercise 2 done.
 **Builds:** the RNN-T forward-backward, loss, and greedy decoder.

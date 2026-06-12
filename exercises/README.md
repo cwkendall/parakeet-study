@@ -24,9 +24,12 @@ NN-name/
   starter.py          ← skeleton with TODO blocks for you to fill in
   reference.py        ← worked solution (peek only when stuck)
   test_<name>.py      ← pytest sanity checks for each TODO
+  explore.ipynb       ← runnable notebook companion (full solution + plots)
   data/               ← any tiny fixtures the exercise needs
   notes.md            ← optional: deeper-dive extension problems
 ```
+
+Every exercise also ships an **`explore.ipynb`** notebook. For exercises 1–3 it contains the complete reference solution split into runnable steps with visualisations and library cross-checks — open it in [Colab](https://colab.research.google.com/github/cwkendall/parakeet-study) or Binder from the badges at the top of each README, or run `jupyter lab explore.ipynb` locally. For exercises 4–6 the notebook is a Colab-GPU walkthrough that clones the repo and runs the training scripts step by step.
 
 ## Workflow recipe (works for every exercise)
 

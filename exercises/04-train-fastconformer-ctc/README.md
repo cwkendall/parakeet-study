@@ -1,5 +1,10 @@
 # Exercise 4 — Train a small FastConformer-CTC on LibriSpeech-clean
 
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/cwkendall/parakeet-study/blob/main/exercises/04-train-fastconformer-ctc/explore.ipynb)
+
+> ▶️ **Run on a free GPU.** Open the `explore.ipynb` companion in Colab (then **Runtime → Change runtime type → GPU**); it clones the repo and runs these scripts step by step. See also [`../CLOUD_GPU_SETUP.md`](../CLOUD_GPU_SETUP.md).
+
+
 **Time budget:** ~1 weekend on a single 24 GB GPU (RTX 3090 / 4090 / A4000) or ~1 day on an A100.
 **Prerequisites:** exercises 2 done; chapters 17–18, 21, 25 of the deep-dive read.
 **Builds:** a real (small) Parakeet-family model that you have trained end-to-end. Target: ≤10% WER on `dev-clean`.

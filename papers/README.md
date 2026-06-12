@@ -4,9 +4,10 @@ The Parakeet Deep Dive cites these papers throughout.
 They are **not redistributed** in this repository — third-party PDFs are
 `.gitignore`d to respect publisher copyright.
 
-To read offline, download each from the link below into this directory.
-The filenames in the table are the names the deep-dive prose refers to, so if
-you keep that convention every inline `papers/NN_….pdf` reference resolves.
+The deep-dive prose cites each paper inline and links to the in-page
+**Bibliography**, which carries the canonical publisher / preprint link — it
+does not depend on local files. This table is just a convenience for reading
+offline: download each from the link below into this directory.
 
 | # | Suggested filename | Citation | Link |
 |---|---|---|---|

@@ -12,7 +12,7 @@
 <!-- Plotly via jsdelivr: cdn.plot.ly serves a MIME type that modern Chrome
      blocks with ORB (ERR_BLOCKED_BY_ORB); jsdelivr serves application/javascript. -->
 <script src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.32.0/plotly.min.js"></script>
-<link rel="icon" href="data:,">
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
 </head>
 <body>
 
@@ -68,6 +68,7 @@
 
   <h2>Part VIII · Going deeper</h2>
   <a href="#ch-readinglist">29. Reading &amp; videos</a>
+  <a href="#ch-bibliography">Appendix · Bibliography</a>
   <a href="#ch-glossary">Appendix · Glossary</a>
 </nav>
 
@@ -79,6 +80,12 @@
 
 <!-- =========================================================== -->
 <h2 id="preface">Preface</h2>
+
+<div class="callout" style="border-color: var(--accent-2); background: rgba(226,149,120,0.08);">
+  <div class="callout-title">On how this was made, and a request</div>
+  <p style="margin:0 0 0.6em">This companion was synthesised with the help of AI tools, working from the primary papers, the NeMo source, and public talks. It has been reviewed for accuracy, but AI-assisted writing is fallible: it may contain omissions, oversimplifications, or outright errors — particularly in the derivations and the exact configuration numbers.</p>
+  <p style="margin:0">If you spot something wrong or unclear, please help the next reader by <a href="https://github.com/cwkendall/parakeet-study/issues">opening a GitHub issue</a>. Corrections, clarifications, and additions are all welcome.</p>
+</div>
 
 <p>This document exists because the Parakeet papers and NeMo docs are written for people who already know what an STFT is, what a CTC lattice looks like, and what "relative positional encoding" means without further elaboration. That assumed background is most of the value.</p>
 
@@ -131,7 +138,7 @@
 
 <p>The document is linear — each chapter builds on the previous ones. There are interactive widgets embedded throughout; <strong>play with them</strong>. They exist because audio and lattices are spatial/visual concepts that prose alone fails to convey. Drag the sliders. Click the lattice cells. Build a Fourier series by hand. The intuition you build with the widgets is the intuition you need to reason about the model.</p>
 
-<p>At the end of every major chapter, there's a <strong>References</strong> box pointing to the canonical paper for that idea. Those PDFs live in <code>./papers/</code> next to this file. Read them.</p>
+<p>At the end of every major chapter, there's a <strong>📄 Paper</strong> box pointing to the canonical source for that idea. Each links to the full entry in the <a href="#ch-bibliography">Bibliography</a>, where you'll find the citation and a link to retrieve the paper from its publisher or preprint server. Read them.</p>
 
 <div class="callout deep">
   <div class="callout-title">Conventions used throughout</div>
@@ -421,7 +428,7 @@ $$m(f) = 2595 \log_{10}\left(1 + \frac{f}{700}\right)$$
 
 <p>The output is the input to the encoder. From this point on, everything is learned. Note that the entire preprocessing pipeline above is deterministic and has zero learnable parameters.</p>
 
-<div class="refs"><strong>📄 In <code>./papers/</code></strong>: nothing specific to feature extraction here — it's all DSP folklore. For deep treatment see Rabiner &amp; Schafer, <em>Theory and Applications of Digital Speech Processing</em>, chapter 6. For Parakeet's exact config, see the NeMo <code>AudioToMelSpectrogramPreprocessor</code> class.</div>
+<div class="refs"><strong>📄 Further reading</strong>: nothing specific to feature extraction here — it's all DSP folklore. For deep treatment see Rabiner &amp; Schafer, <em>Theory and Applications of Digital Speech Processing</em>, chapter 6. For Parakeet's exact config, see the NeMo <code>AudioToMelSpectrogramPreprocessor</code> class.</div>
 
 <h2 id="ch-specaug">9. SpecAugment — masking as augmentation</h2>
 
@@ -444,7 +451,7 @@ $$m(f) = 2595 \log_{10}\left(1 + \frac{f}{700}\right)$$
 </div>
 
 <div class="refs">
-  <strong>📄 In <code>./papers/</code></strong>: <code>08_SpecAugment_1904.08779.pdf</code> (Park et al., Interspeech 2019). The original paper, very readable. Section 3 has the exact recipe. Note that Parakeet uses the &ldquo;LB (LibriSpeech basic)&rdquo; policy: <code>(W=0, F=27, mF=2, T=p·T_utt, p=0.05, mT=10)</code>.
+  <strong>📄 Paper</strong>: <a href="#ref-08">Park et al., <em>SpecAugment</em> (Interspeech 2019)</a>. The original paper, very readable. Section 3 has the exact recipe. Note that Parakeet uses the &ldquo;LB (LibriSpeech basic)&rdquo; policy: <code>(W=0, F=27, mF=2, T=p·T_utt, p=0.05, mT=10)</code>.
 </div>
 
 <!-- =========================================================== -->
@@ -616,10 +623,10 @@ pos_emb_max_len: 5000  # max relative distance precomputed</code></pre>
 </div>
 
 <div class="refs">
-  <strong>📄 In <code>./papers/</code></strong>:
+  <strong>📄 Papers</strong>:
   <ul style="margin:0.4em 0">
-    <li><code>06_TransformerXL_1901.02860.pdf</code> — Section 3.3 is the relpos derivation. Read it after this chapter.</li>
-    <li><code>07_AttentionIsAllYouNeed_1706.03762.pdf</code> — Section 3.5 has the original sinusoidal PE for comparison.</li>
+    <li><a href="#ref-06">Dai et al., <em>Transformer-XL</em> (2019)</a> — Section 3.3 is the relpos derivation. Read it after this chapter.</li>
+    <li><a href="#ref-07">Vaswani et al., <em>Attention Is All You Need</em> (2017)</a> — Section 3.5 has the original sinusoidal PE for comparison.</li>
   </ul>
 </div>
 
@@ -661,10 +668,10 @@ CONFORMER (macaron):     x ──▶ ½·FFN ──▶ MHA ──▶ ConvModule 
                                    (with residual around each, pre-norm)
 </div>
 
-<p>Why "½ FFN"? Each half-FFN's residual contribution is scaled by 0.5: $y = x + 0.5 \cdot \text{FFN}(\text{LN}(x))$. The justification comes from <a href="papers/10_Macaron_1906.02762.pdf">Macaron-Net (Lu et al. 2019)</a>, which interprets the Transformer's residual stream as a discretisation of an ODE. Strang splitting for ODEs suggests that a symmetric structure of half-steps around a central operation has better numerical properties than a sequence of full steps. In practice the macaron form gives a small but reliable WER improvement at the same parameter count.</p>
+<p>Why "½ FFN"? Each half-FFN's residual contribution is scaled by 0.5: $y = x + 0.5 \cdot \text{FFN}(\text{LN}(x))$. The justification comes from <a href="#ref-10">Macaron-Net (Lu et al. 2019)</a>, which interprets the Transformer's residual stream as a discretisation of an ODE. Strang splitting for ODEs suggests that a symmetric structure of half-steps around a central operation has better numerical properties than a sequence of full steps. In practice the macaron form gives a small but reliable WER improvement at the same parameter count.</p>
 
 <div class="refs">
-  <strong>📄 In <code>./papers/</code></strong>: <code>10_Macaron_1906.02762.pdf</code>. Skim section 4 for the ODE perspective; the rest is fascinating but optional for understanding Conformer.
+  <strong>📄 Paper</strong>: <a href="#ref-10">Lu et al., <em>Macaron-Net</em> (2019)</a>. Skim section 4 for the ODE perspective; the rest is fascinating but optional for understanding Conformer.
 </div>
 
 <!-- =========================================================== -->
@@ -766,7 +773,7 @@ output [B, T_in/8, 1024]
 <p>The decoder (TDT or RNN-T) adds 20-50M parameters depending on the prediction-network LSTM hidden size and the joint network projection dim.</p>
 
 <div class="refs">
-  <strong>📄 In <code>./papers/</code></strong>: <code>01_FastConformer_2305.05084.pdf</code>. Section 3 is the architecture changes; section 4 has the speed/quality measurements. Section 5 covers the long-form attention story, which is the next chapter.
+  <strong>📄 Paper</strong>: <a href="#ref-01">Rekesh et al., <em>Fast Conformer</em> (2023)</a>. Section 3 is the architecture changes; section 4 has the speed/quality measurements. Section 5 covers the long-form attention story, which is the next chapter.
 </div>
 
 <h2 id="ch-longform">19. Long audio: limited context attention and global tokens</h2>
@@ -799,10 +806,10 @@ output [B, T_in/8, 1024]
 <p>The <em>full-attention</em> Parakeet-TDT-0.6B-v2 (the one on the OpenASR leaderboard) doesn't use LCA — it just caps single-pass input at ~24 minutes and uses chunking for longer files. The leaderboard scores benefit from full attention; the long-form variants benefit from LCA. They're different optimisation points.</p>
 
 <div class="refs">
-  <strong>📄 In <code>./papers/</code></strong>:
+  <strong>📄 Papers</strong>:
   <ul style="margin:0.4em 0">
-    <li><code>09_Longformer_2004.05150.pdf</code> — for the windowed + global attention pattern.</li>
-    <li><code>11_LongFormASR_2309.09950.pdf</code> — Koluguri et al. on putting it together for ASR specifically. Section 4 has the global token results.</li>
+    <li><a href="#ref-09">Beltagy et al., <em>Longformer</em> (2020)</a> — for the windowed + global attention pattern.</li>
+    <li><a href="#ref-11">Koluguri et al., <em>Long-Form ASR</em> (2023)</a> — putting it together for ASR specifically. Section 4 has the global token results.</li>
   </ul>
 </div>
 
@@ -916,9 +923,9 @@ $$\text{score}(y) = \log P(y \mid x) + \lambda \log P_{\text{LM}}(y) + \alpha |y
 <p>Decoding options for CTC range from <em>greedy</em> (argmax per frame, collapse) → <em>prefix beam search</em> (track separate blank/non-blank prefix probabilities) → <em>WFST decoding</em> (compose H ∘ C ∘ L ∘ G transducers with an n-gram LM and Viterbi-decode the composed graph) → <em>neural LM rescoring</em> on the n-best list or lattice. Production Kaldi-style ASR systems live in the WFST world; modern Parakeet/NeMo deployments tend to use greedy + optional shallow fusion for throughput, or prefix beam + n-gram for accuracy-critical pipelines.</p>
 
 <div class="refs">
-  <strong>📄 In <code>./papers/</code></strong>:
+  <strong>📄 Papers</strong>:
   <ul style="margin:0.4em 0">
-    <li><code>05_CTC_Graves2006.pdf</code> — the original CTC paper. Sections 3–4 derive the forward-backward.</li>
+    <li><a href="#ref-05">Graves et al., <em>CTC</em> (2006)</a> — the original CTC paper. Sections 3–4 derive the forward-backward.</li>
     <li>The <a href="https://distill.pub/2017/ctc/">Awni Hannun Distill article on CTC</a> is the single best supplementary read. Visual, animated, very clear.</li>
   </ul>
 </div>
@@ -1017,10 +1024,10 @@ return hypothesis</code></pre>
 <p>The prediction network gives the joint distribution $P(y_u \mid y_{<u}, x)$ — full conditional dependence on previously emitted tokens. The model learns an internal language model as part of training. Empirically, a Parakeet RNN-T at 0.6B parameters beats a Parakeet CTC at 0.6B parameters by 1–2 WER points without any external LM.</p>
 
 <div class="refs">
-  <strong>📄 In <code>./papers/</code></strong>:
+  <strong>📄 Papers</strong>:
   <ul style="margin:0.4em 0">
-    <li><code>04_RNNT_Graves2012_1211.3711.pdf</code> — the original RNN-T paper. Section 2 has the forward-backward.</li>
-    <li><code>13_StreamingRNNT_Mobile_1811.06621.pdf</code> — the He et al. paper that revived RNN-T for production. Useful for understanding the practical streaming concerns.</li>
+    <li><a href="#ref-04">Graves, <em>RNN-T</em> (2012)</a> — the original RNN-T paper. Section 2 has the forward-backward.</li>
+    <li><a href="#ref-13">He et al., <em>Streaming RNN-T for Mobile</em> (2019)</a> — the paper that revived RNN-T for production. Useful for understanding the practical streaming concerns.</li>
     <li>Loren Lugosch's <a href="https://lorenlugosch.github.io/posts/2020/11/transducer/">"Sequence-to-Sequence Learning with Transducers"</a> blog post — has explicit Python code for the forward-backward.</li>
   </ul>
 </div>
@@ -1126,10 +1133,10 @@ This adds a fixed per-transition penalty, so paths that take fewer/larger-durati
 <p>This is still why <code>parakeet-tdt-0.6b-v2</code> can advertise word-level timestamps as a first-class feature, while attention-decoder models like Canary-1B-v2 need an auxiliary CTC head plus the NeMo Forced Aligner to get the same thing (see Canary paper §5).</p>
 
 <div class="refs">
-  <strong>📄 In <code>./papers/</code></strong>:
+  <strong>📄 Papers</strong>:
   <ul style="margin:0.4em 0">
-    <li><code>02_TDT_2304.06795.pdf</code> — the TDT paper. Read sections 3 and 4 carefully; the appendix has the gradient derivations.</li>
-    <li><code>14_MultiBlankTransducer_2211.03541.pdf</code> — Huang et al., the direct predecessor (a "big blank" that covers multiple frames). TDT generalises this to per-token durations.</li>
+    <li><a href="#ref-02">Xu et al., <em>TDT</em> (2023)</a> — the TDT paper. Read sections 3 and 4 carefully; the appendix has the gradient derivations.</li>
+    <li><a href="#ref-14">Huang et al., <em>Multi-blank Transducers</em> (2022)</a> — the direct predecessor (a "big blank" that covers multiple frames). TDT generalises this to per-token durations.</li>
     <li>Speechmatics's <a href="https://www.speechmatics.com/company/articles-and-news/token-duration-transducer-tdt-explained">TDT walkthrough</a> — very readable secondary source, includes pseudocode.</li>
   </ul>
 </div>
@@ -1339,19 +1346,20 @@ This adds a fixed per-transition penalty, so paths that take fewer/larger-durati
 <li><strong>Jay Alammar, <a href="https://jalammar.github.io/illustrated-transformer/">The Illustrated Transformer</a></strong>. Best visual intro to attention and multi-head.</li>
 </ol>
 
-<h3>Canonical papers (in <code>./papers/</code>)</h3>
+<h3>Canonical papers</h3>
+<p>Full citations and links are in the <a href="#ch-bibliography">Bibliography</a>; this is the suggested reading order.</p>
 <ol>
-<li>Graves et al. 2006 — CTC (<code>05_CTC_Graves2006.pdf</code>). The original. Forward-backward derivation in §4.</li>
-<li>Graves 2012 — RNN-T (<code>04_RNNT_Graves2012_1211.3711.pdf</code>). The original. §2 has the lattice math.</li>
-<li>Vaswani et al. 2017 — Transformer (<code>07_AttentionIsAllYouNeed_1706.03762.pdf</code>). The starting point for everything Conformer-shaped.</li>
-<li>Dai et al. 2019 — Transformer-XL (<code>06_TransformerXL_1901.02860.pdf</code>). §3.3 is the relpos derivation.</li>
-<li>Park et al. 2019 — SpecAugment (<code>08_SpecAugment_1904.08779.pdf</code>). §3 is the exact recipe.</li>
-<li>Gulati et al. 2020 — Conformer (<code>03_Conformer_2005.08100.pdf</code>). §2 is the block.</li>
-<li>Beltagy et al. 2020 — Longformer (<code>09_Longformer_2004.05150.pdf</code>). §3 is windowed + global attention.</li>
-<li>Rekesh et al. 2023 — FastConformer (<code>01_FastConformer_2305.05084.pdf</code>). §3 architecture, §4 measurements, §5 long-form.</li>
-<li>Xu et al. 2023 — TDT (<code>02_TDT_2304.06795.pdf</code>). §3 is the lattice; appendix has gradient derivations.</li>
-<li>Koluguri et al. 2023 — Long-form ASR (<code>11_LongFormASR_2309.09950.pdf</code>). LCA + global tokens, end-to-end.</li>
-<li>Sekoyan et al. 2025 — Parakeet-v3 / Canary-v2 (<code>12_ParakeetTDTv3_CanaryV2_2509.14128.pdf</code>). Current state of the art recipe.</li>
+<li><a href="#ref-05">Graves et al. 2006 — CTC</a>. The original. Forward-backward derivation in §4.</li>
+<li><a href="#ref-04">Graves 2012 — RNN-T</a>. The original. §2 has the lattice math.</li>
+<li><a href="#ref-07">Vaswani et al. 2017 — Transformer</a>. The starting point for everything Conformer-shaped.</li>
+<li><a href="#ref-06">Dai et al. 2019 — Transformer-XL</a>. §3.3 is the relpos derivation.</li>
+<li><a href="#ref-08">Park et al. 2019 — SpecAugment</a>. §3 is the exact recipe.</li>
+<li><a href="#ref-03">Gulati et al. 2020 — Conformer</a>. §2 is the block.</li>
+<li><a href="#ref-09">Beltagy et al. 2020 — Longformer</a>. §3 is windowed + global attention.</li>
+<li><a href="#ref-01">Rekesh et al. 2023 — FastConformer</a>. §3 architecture, §4 measurements, §5 long-form.</li>
+<li><a href="#ref-02">Xu et al. 2023 — TDT</a>. §3 is the lattice; appendix has gradient derivations.</li>
+<li><a href="#ref-11">Koluguri et al. 2023 — Long-form ASR</a>. LCA + global tokens, end-to-end.</li>
+<li><a href="#ref-12">Sekoyan et al. 2025 — Parakeet-v3 / Canary-v2</a>. Current state of the art recipe.</li>
 </ol>
 
 <h3>Lecture series</h3>
@@ -1396,6 +1404,28 @@ This adds a fixed per-transition penalty, so paths that take fewer/larger-durati
 </div>
 
 <p>If you do all six you will have built, by hand, every component of Parakeet at small scale. That's how you get to where you can read a NeMo PR and have informed opinions.</p>
+
+<h2 id="ch-bibliography">Appendix · Bibliography</h2>
+
+<p>The canonical sources cited throughout, with links to retrieve each from its publisher or preprint server. Inline <strong>📄 Paper</strong> notes link here; this list is the single source of truth.</p>
+
+<ol class="bibliography">
+<li id="ref-01">Rekesh, D., Koluguri, N. R., Kriman, S., et al. (2023). <em>Fast Conformer with Linearly Scalable Attention for Efficient Speech Recognition</em>. ASRU 2023. arXiv:2305.05084. <a href="https://arxiv.org/abs/2305.05084">arxiv.org/abs/2305.05084</a></li>
+<li id="ref-02">Xu, H., Jia, F., Majumdar, S., et al. (2023). <em>Efficient Sequence Transduction by Jointly Predicting Tokens and Durations</em> (TDT). ICML 2023. arXiv:2304.06795. <a href="https://arxiv.org/abs/2304.06795">arxiv.org/abs/2304.06795</a></li>
+<li id="ref-03">Gulati, A., Qin, J., Chiu, C.-C., et al. (2020). <em>Conformer: Convolution-augmented Transformer for Speech Recognition</em>. Interspeech 2020. arXiv:2005.08100. <a href="https://arxiv.org/abs/2005.08100">arxiv.org/abs/2005.08100</a></li>
+<li id="ref-04">Graves, A. (2012). <em>Sequence Transduction with Recurrent Neural Networks</em> (RNN-T). arXiv:1211.3711. <a href="https://arxiv.org/abs/1211.3711">arxiv.org/abs/1211.3711</a></li>
+<li id="ref-05">Graves, A., Fernández, S., Gomez, F., &amp; Schmidhuber, J. (2006). <em>Connectionist Temporal Classification: Labelling Unsegmented Sequence Data with Recurrent Neural Networks</em>. ICML 2006. <a href="https://www.cs.toronto.edu/~graves/icml_2006.pdf">cs.toronto.edu/~graves/icml_2006.pdf</a></li>
+<li id="ref-06">Dai, Z., Yang, Z., Yang, Y., et al. (2019). <em>Transformer-XL: Attentive Language Models Beyond a Fixed-Length Context</em>. ACL 2019. arXiv:1901.02860. <a href="https://arxiv.org/abs/1901.02860">arxiv.org/abs/1901.02860</a></li>
+<li id="ref-07">Vaswani, A., Shazeer, N., Parmar, N., et al. (2017). <em>Attention Is All You Need</em>. NeurIPS 2017. arXiv:1706.03762. <a href="https://arxiv.org/abs/1706.03762">arxiv.org/abs/1706.03762</a></li>
+<li id="ref-08">Park, D. S., Chan, W., Zhang, Y., et al. (2019). <em>SpecAugment: A Simple Data Augmentation Method for Automatic Speech Recognition</em>. Interspeech 2019. arXiv:1904.08779. <a href="https://arxiv.org/abs/1904.08779">arxiv.org/abs/1904.08779</a></li>
+<li id="ref-09">Beltagy, I., Peters, M. E., &amp; Cohan, A. (2020). <em>Longformer: The Long-Document Transformer</em>. arXiv:2004.05150. <a href="https://arxiv.org/abs/2004.05150">arxiv.org/abs/2004.05150</a></li>
+<li id="ref-10">Lu, Y., Li, Z., He, D., et al. (2019). <em>Understanding and Improving Transformer From a Multi-Particle Dynamic System Point of View</em> (Macaron). arXiv:1906.02762. <a href="https://arxiv.org/abs/1906.02762">arxiv.org/abs/1906.02762</a></li>
+<li id="ref-11">Koluguri, N. R., Kriman, S., Zelenfroind, G., et al. (2023). <em>Investigating End-to-End ASR Architectures for Long Form Audio Transcription</em>. ICASSP 2024. arXiv:2309.09950. <a href="https://arxiv.org/abs/2309.09950">arxiv.org/abs/2309.09950</a></li>
+<li id="ref-12">Sekoyan, R., Koluguri, N. R., Żelasko, P., et al. (2025). <em>Parakeet-TDT v3 / Canary-1B v2 training recipe</em>. arXiv:2509.14128. <a href="https://arxiv.org/abs/2509.14128">arxiv.org/abs/2509.14128</a></li>
+<li id="ref-13">He, Y., Sainath, T. N., Prabhavalkar, R., et al. (2019). <em>Streaming End-to-End Speech Recognition for Mobile Devices</em>. ICASSP 2019. arXiv:1811.06621. <a href="https://arxiv.org/abs/1811.06621">arxiv.org/abs/1811.06621</a></li>
+<li id="ref-14">Huang, T., Zhang, Y., Koluguri, N. R., et al. (2022). <em>Multi-blank Transducers for Speech Recognition</em>. arXiv:2211.03541. <a href="https://arxiv.org/abs/2211.03541">arxiv.org/abs/2211.03541</a></li>
+<li id="ref-15">Amodei, D., Ananthanarayanan, S., Anubhai, R., et al. (2015). <em>Deep Speech 2: End-to-End Speech Recognition in English and Mandarin</em>. arXiv:1512.02595. <a href="https://arxiv.org/abs/1512.02595">arxiv.org/abs/1512.02595</a></li>
+</ol>
 
 <h2 id="ch-glossary">Appendix · Glossary</h2>
 

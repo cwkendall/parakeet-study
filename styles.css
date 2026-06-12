@@ -507,6 +507,24 @@ hr {
 }
 .refs strong { color: var(--fg); }
 
+/* Bibliography */
+ol.bibliography {
+  font-size: 15px;
+  line-height: 1.55;
+  padding-left: 2.2em;
+}
+ol.bibliography li {
+  margin: 0.55em 0;
+  /* leave room so a deep-link target isn't hidden under a sticky header */
+  scroll-margin-top: 1em;
+}
+ol.bibliography li:target {
+  background: var(--bg-code);
+  border-radius: 4px;
+  box-shadow: 0 0 0 6px var(--bg-code);
+}
+ol.bibliography em { color: var(--fg); }
+
 /* KaTeX adjustments */
 .katex { font-size: 1em !important; }
 .katex-display { margin: 1em 0 !important; overflow-x: auto; overflow-y: hidden; }

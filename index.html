@@ -1,0 +1,1477 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Parakeet Deep Dive — An Engineering Companion</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body, {delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}]});"></script>
+<script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+</head>
+<body>
+
+<div class="layout">
+
+<nav class="toc">
+  <h2>Front matter</h2>
+  <a href="#preface">Preface</a>
+  <a href="#prereqs">Prerequisites</a>
+  <a href="#how-to-read">How to read this</a>
+
+  <h2>Part I · The problem</h2>
+  <a href="#ch-asr">1. What ASR is</a>
+  <a href="#ch-align">2. The alignment problem</a>
+  <a href="#ch-history">3. A brief lineage</a>
+
+  <h2>Part II · Audio &amp; features</h2>
+  <a href="#ch-digital">4. Digital audio</a>
+  <a href="#ch-fourier">5. Fourier transform</a>
+  <a href="#ch-stft">6. STFT &amp; spectrograms</a>
+  <a href="#ch-mel">7. The mel scale</a>
+  <a href="#ch-preproc">8. The full preprocessor</a>
+  <a href="#ch-specaug">9. SpecAugment</a>
+
+  <h2>Part III · Neural building blocks</h2>
+  <a href="#ch-conv">10. 1D convolutions</a>
+  <a href="#ch-dwsep">11. Depthwise &amp; separable conv</a>
+  <a href="#ch-attn">12. Self-attention from scratch</a>
+  <a href="#ch-mha">13. Multi-head attention</a>
+  <a href="#ch-pe">14. Positional encoding</a>
+  <a href="#ch-relpos">15. Transformer-XL relpos</a>
+  <a href="#ch-norms">16. LayerNorm, residuals, macaron</a>
+
+  <h2>Part IV · The encoder</h2>
+  <a href="#ch-conformer">17. The Conformer block</a>
+  <a href="#ch-fastconf">18. FastConformer</a>
+  <a href="#ch-longform">19. Long audio: LCA + global tokens</a>
+
+  <h2>Part V · The decoders</h2>
+  <a href="#ch-decode-intro">20. Three ways to decode</a>
+  <a href="#ch-ctc">21. CTC, derived</a>
+  <a href="#ch-rnnt">22. RNN-T &amp; the lattice</a>
+  <a href="#ch-tdt">23. TDT — tokens with durations</a>
+
+  <h2>Part VI · Tokens, training, inference</h2>
+  <a href="#ch-bpe">24. BPE / SentencePiece</a>
+  <a href="#ch-training">25. Training pipeline</a>
+  <a href="#ch-inference">26. Inference at scale</a>
+
+  <h2>Part VII · Putting it together</h2>
+  <a href="#ch-pipeline">27. End-to-end pipeline</a>
+  <a href="#ch-engineering">28. Engineering implications</a>
+
+  <h2>Part VIII · Going deeper</h2>
+  <a href="#ch-readinglist">29. Reading &amp; videos</a>
+  <a href="#ch-glossary">Appendix · Glossary</a>
+</nav>
+
+<main>
+
+<img class="cover-hero" src="diagrams/00-cover-hero.png" alt="Parakeet Deep Dive — cover illustration showing audio waveform transforming through a mel spectrogram and stacked encoder layers into the word PARAKEET">
+<h1>Parakeet Deep Dive</h1>
+<p style="font-size:1.1em;color:var(--fg-muted);margin-top:-0.5em;font-style:italic;">An engineering companion to NVIDIA's FastConformer-TDT speech recognition stack — from raw waveform to emitted text, with all the math and none of the hand-waving.</p>
+
+<!-- =========================================================== -->
+<h2 id="preface">Preface</h2>
+
+<p>This document exists because the Parakeet papers and NeMo docs are written for people who already know what an STFT is, what a CTC lattice looks like, and what "relative positional encoding" means without further elaboration. That assumed background is most of the value.</p>
+
+<p>By the time you finish this document you should be able to:</p>
+<ul>
+<li>Explain to a stranger why ASR is fundamentally an alignment problem, and why every ASR family (HMM-GMM, hybrid HMM-NN, CTC, AED, transducer) makes a different alignment tradeoff.</li>
+<li>Derive the CTC forward-backward algorithm on a napkin.</li>
+<li>Draw the RNN-T lattice, then draw the TDT modification, then explain why the latter is roughly 2.8× faster at inference.</li>
+<li>Step through the FastConformer encoder layer by layer with the right tensor shapes at each point.</li>
+<li>Discuss, with NVIDIA staff, the trade-offs between full attention vs limited-context attention with global tokens for long-form audio, and why Parakeet-TDT-0.6B-v2 advertises ~24 minutes single-pass while the limited-context variants extend to many hours.</li>
+<li>Read the relevant NeMo source files (<code>conformer_encoder.py</code>, <code>rnnt.py</code>, <code>tdt_loop_labels_computer.py</code>) and follow what every line does.</li>
+</ul>
+
+<div class="callout">
+  <div class="callout-title">A note on tone, and on what this is not</div>
+  This is enough math to read the papers and the source code, not a full research treatise. Several active areas — production decoding (WFST/n-gram fusion, beam search variants), streaming/cache-aware inference, hybrid CTC+attention training, MWER fine-tuning, numerical stability tricks inside the TDT loss — are sketched here rather than fully derived. The <em>Going deeper</em> chapter (29) and the <em>Hands-on exercises</em> are where you cross the remaining gap. Where I have a strong opinion I will say so plainly; where the answer is "it depends" I will say <em>that</em> plainly too.
+</div>
+
+<div class="callout" style="border-color: var(--accent-2); background: rgba(244,114,182,0.06);">
+  <div class="callout-title">Notation used throughout</div>
+  <table style="margin:0">
+    <tr><th>Symbol</th><th>Meaning</th></tr>
+    <tr><td><code>N</code></td><td>raw audio samples (16 kHz)</td></tr>
+    <tr><td><code>T<sub>mel</sub></code></td><td>mel-spectrogram frames (10 ms hop, ~100 frames/sec)</td></tr>
+    <tr><td><code>T</code> (a.k.a. <code>T<sub>enc</sub></code>)</td><td>encoder frames after 8× subsampling (80 ms hop, 12.5 frames/sec). When this document says "T" inside an encoder/decoder context this is what is meant.</td></tr>
+    <tr><td><code>U</code></td><td>output token sequence length</td></tr>
+    <tr><td><code>V</code></td><td>non-blank token vocabulary (size 1024 for Parakeet-TDT v2; 8192 for v3)</td></tr>
+    <tr><td><code>∅</code></td><td>blank symbol (one extra index beyond <code>V</code>)</td></tr>
+    <tr><td><code>D</code></td><td>set of allowed TDT durations, typically <code>{0,1,2,3,4}</code></td></tr>
+    <tr><td><code>f<sub>t</sub></code> / <code>h<sub>t</sub></code></td><td>encoder output at frame <code>t</code></td></tr>
+    <tr><td><code>g<sub>u</sub></code></td><td>prediction-network state after <code>u</code> emitted non-blank tokens</td></tr>
+    <tr><td><code>α(t,u)</code></td><td>forward variable: total probability of reaching lattice cell <code>(t,u)</code></td></tr>
+  </table>
+</div>
+
+<h2 id="prereqs">Prerequisites</h2>
+<p>You should be comfortable with:</p>
+<ul>
+<li><strong>Linear algebra</strong>: matrix multiplication, eigendecomposition, basic intuition for what a dot product means geometrically.</li>
+<li><strong>Calculus</strong>: chain rule, gradients of vector-valued functions.</li>
+<li><strong>Probability</strong>: conditional probability, log-likelihood, marginalisation.</li>
+<li><strong>General CS</strong>: dynamic programming, recursion, the difference between $O(n^2)$ and $O(n)$, what a tensor is.</li>
+<li><strong>Neural networks</strong>: you've trained an MLP and a small CNN; you understand backprop, SGD/Adam, dropout, batch norm. You don't need to have implemented attention from scratch.</li>
+<li><strong>Transformers, vaguely</strong>: you've heard of self-attention, you know there's a thing called "multi-head". You don't need to know what relative positional encoding is — we'll build it up.</li>
+</ul>
+
+<p>You do NOT need to know anything about audio processing, ASR specifically, or NeMo. We start from sample rates and end at production deployment.</p>
+
+<h2 id="how-to-read">How to read this</h2>
+
+<p>The document is linear — each chapter builds on the previous ones. There are interactive widgets embedded throughout; <strong>play with them</strong>. They exist because audio and lattices are spatial/visual concepts that prose alone fails to convey. Drag the sliders. Click the lattice cells. Build a Fourier series by hand. The intuition you build with the widgets is the intuition you need to reason about the model.</p>
+
+<p>At the end of every major chapter, there's a <strong>References</strong> box pointing to the canonical paper for that idea. Those PDFs live in <code>./papers/</code> next to this file. Read them.</p>
+
+<div class="callout deep">
+  <div class="callout-title">Conventions used throughout</div>
+  Tensors are written with their shape after them, e.g. $f \in \mathbb{R}^{B \times T \times d}$ means a tensor of batch B, time T, depth d. Time-domain indices use $t$. Output-token-position indices use $u$. Encoder frame rate is consistently 80&nbsp;ms (12.5 Hz) once we get past the subsampler. Mel bins use $m$. Frequency bins use $k$. Sample-domain indices use $n$.
+</div>
+
+<!-- =========================================================== -->
+<img class="part-hero" src="diagrams/01-part-i-problem.png" alt="Part I — The Problem: title card visualising the alignment problem with a row of audio frames mapping ambiguously to fewer letter labels">
+<div class="part-title">Part I · The problem</div>
+
+<h2 id="ch-asr">1. What ASR is, formally</h2>
+
+<p>Automatic Speech Recognition is the task: given an audio waveform $x \in \mathbb{R}^N$ (a sequence of pressure samples) produce a text string $y$. We want to learn $P(y \mid x)$ and emit $\arg\max_y P(y \mid x)$.</p>
+
+<p>That sentence hides three pieces of structure that make the problem distinctive:</p>
+
+<ol>
+<li><strong>The input is much longer than the output.</strong> A 10-second audio clip at 16 kHz is 160,000 samples. Its transcript is maybe 25 characters. The model has to compress by a factor of ~6,000.</li>
+<li><strong>The compression rate is non-uniform.</strong> Speakers slow down, speed up, pause. A single phoneme can span 50 ms or 500 ms.</li>
+<li><strong>There is no provided correspondence.</strong> The training data is just <code>(audio, transcript)</code> pairs. You are not told "this sample range corresponds to the letter 'c'". You have to learn the alignment <em>as part of</em> learning to recognise.</li>
+</ol>
+
+<p>Modern ASR pipelines split the problem into two stages:</p>
+
+<div class="diagram">
+audio waveform  ──▶  [ feature extraction ]  ──▶  feature sequence  ──▶  [ neural network ]  ──▶  text
+   ~160k samples       (deterministic DSP)        ~T=1000 frames           (the model)         "the quick..."
+</div>
+
+<p>The feature-extraction stage produces a sequence of compact vectors (typically log-mel filterbank features at 100 Hz) from the waveform. This is pure signal processing — no learning. The neural network then maps that sequence to text. Almost all the engineering interest is in the second stage, but you cannot understand the second stage without understanding what its input actually <em>is</em>, which is why we will spend the whole of Part II on the input.</p>
+
+<h2 id="ch-align">2. The alignment problem</h2>
+
+<p>Imagine the simplest possible ASR setup. You have 1000 frames of audio features and you want to predict the transcript "<code>cat</code>" (3 characters). One way to train a neural network would be: classify each of the 1000 frames into one of {c, a, t, &nbsp;blank}, then collapse the result to "<code>cat</code>". But to train this with cross-entropy you'd need to know which frames are <code>c</code>, which are <code>a</code>, which are <code>t</code>, and which are <code>blank</code>. <strong>That information is not in your training data.</strong></p>
+
+<div class="widget">
+  <div class="widget-title">📍 Widget — Try to align by hand</div>
+  <p>Target transcript: <code>CAT</code>. Audio has 10 frames. Try to construct an alignment by clicking each frame to set its label. The model would have to produce the right thing for <em>any</em> valid alignment.</p>
+  <div id="align-widget"></div>
+  <div class="widget-caption">A "valid" alignment is any sequence of labels of length 10 that collapses to "CAT" after removing repeats and blanks. There are dozens of them. Which one is correct? Trick question — they're all correct.</div>
+</div>
+
+<p>This is the fundamental challenge ASR systems exist to solve. Three families of solutions exist:</p>
+
+<ol>
+<li><strong>Force alignment with a separate system.</strong> Use an HMM-based system to align the training data first, then train a model to predict the per-frame labels. This is the classical hybrid DNN-HMM approach (Mohamed, Dahl, Hinton, 2009). It works but requires the separate aligner, which is itself trained on some bootstrap data — an unappealing chain of dependencies.</li>
+<li><strong>Marginalise over all alignments.</strong> Don't pick one alignment; treat all valid alignments as latent variables and sum over them during training. This is what <strong>CTC</strong> does (Graves et al. 2006). It's elegant and the loss is differentiable, but the assumption that frames are conditionally independent given the input is too strong.</li>
+<li><strong>Treat the problem as sequence-to-sequence with attention.</strong> Use an encoder-decoder with attention, like Listen-Attend-Spell (Chan et al. 2015) or Whisper. The decoder reads the encoded audio "however it wants". This works very well but is fundamentally non-streaming and has a tendency to hallucinate when there's nothing to transcribe.</li>
+<li><strong>Sequence transduction with a transducer.</strong> Marginalise over alignments like CTC, but also model output-output dependencies via a separate prediction network. This is RNN-T (Graves 2012) and its descendant TDT (Xu et al. 2023). Parakeet uses this.</li>
+</ol>
+
+<p>The whole point of the rest of this document is to understand why option 4 won, and exactly how Parakeet implements it.</p>
+
+<h2 id="ch-history">3. A brief lineage</h2>
+
+<p>To put Parakeet in context, here is the rough genealogy from "neural ASR is a research curiosity" to "Parakeet-TDT sits atop the OpenASR leaderboard":</p>
+
+<div class="diagram">
+2006  CTC                              Graves et al. — marginalise over alignments
+2012  RNN-T                            Graves — add a prediction network → conditional dependencies
+2014  Deep Speech (CTC)                Hannun et al. — first big-data CTC system
+2015  Listen-Attend-Spell              Chan et al. — encoder-decoder attention model
+2017  Attention Is All You Need        Vaswani et al. — the Transformer
+2018  Streaming RNN-T on mobile        He et al. — the paper that revived transducers
+2019  Transformer-XL relpos            Dai et al. — relative positional encoding
+2019  SpecAugment                      Park et al. — frequency/time masking
+2020  Conformer                        Gulati et al. — convolution + self-attention block
+2020  Longformer                       Beltagy et al. — local + global attention
+2022  Whisper                          Radford et al. — large-scale weakly-supervised seq2seq
+2023  FastConformer                    Rekesh et al. — 8× subsampling, depthwise conv
+2023  TDT                              Xu et al. — token + duration prediction
+2024  Parakeet-TDT 0.6B / 1.1B         NVIDIA — FastConformer + TDT, SOTA on OpenASR
+2025  Parakeet-TDT-v3 (25 languages)   Sekoyan et al. — multilingual
+</div>
+
+<p>Two technical strands run through this timeline:</p>
+
+<ol>
+<li><strong>How do we model the audio?</strong> RNN → LSTM → bidirectional LSTM → Transformer → Conformer → FastConformer. Each step traded some inductive bias or some compute for better quality or speed.</li>
+<li><strong>How do we handle alignment?</strong> CTC → seq2seq attention → RNN-T → TDT. Each step gave us a richer probabilistic model or a faster inference loop.</li>
+</ol>
+
+<p>Parakeet is a particular point in design space: FastConformer encoder + TDT decoder. Whisper is a different point: encoder-decoder Transformer. Both are state-of-the-art for different reasons. Whisper's edge is multilingual breadth from massive weak supervision; Parakeet's edge is inference speed and word-level timestamps from the transducer architecture.</p>
+
+<!-- =========================================================== -->
+<img class="part-hero" src="diagrams/02-part-ii-audio.png" alt="Part II — Audio and Features: title card showing the three-stage transformation from waveform to STFT grid to mel spectrogram">
+<div class="part-title">Part II · Audio &amp; features</div>
+
+<h2 id="ch-digital">4. Digital audio from first principles</h2>
+
+<p>Sound is a pressure wave in air. A microphone converts that pressure into a voltage. An analog-to-digital converter (ADC) measures that voltage at regular intervals and stores each measurement as an integer. The output is a sequence of numbers $x[0], x[1], x[2], \ldots$ called <em>samples</em>.</p>
+
+<p>Two parameters matter:</p>
+<ul>
+<li><strong>Sample rate</strong> $f_s$, in Hz: how many measurements per second. Speech ASR uses 16,000 Hz (16 kHz). Telephony historically used 8 kHz. CD audio is 44.1 kHz. Studio audio is 48 kHz or 96 kHz.</li>
+<li><strong>Bit depth</strong>: how many bits per sample. Usually 16 bits, giving a dynamic range of about 96 dB. ASR models work on float32 normalised to roughly $[-1, 1]$.</li>
+</ul>
+
+<h3>The Nyquist–Shannon sampling theorem</h3>
+
+<p>This is the single most important fact in digital signal processing:</p>
+
+<div class="callout deep">
+  <div class="callout-title">Nyquist–Shannon theorem</div>
+  A continuous signal containing no frequencies above $f_{\text{max}}$ can be perfectly reconstructed from samples taken at rate $f_s \geq 2 f_{\text{max}}$. If you sample below that rate, frequencies above $f_s/2$ alias down into the lower range and corrupt your signal. There is no recovery from aliasing once it has happened.
+</div>
+
+<p>16 kHz audio captures everything up to 8 kHz. Most speech energy is below 8 kHz (fricatives like /s/ and /sh/ have most of their energy in the 3–8 kHz range), which is why 16 kHz is the standard for ASR. Music needs 44.1 kHz because human hearing extends to ~20 kHz.</p>
+
+<p>To see why aliasing happens, play with this:</p>
+
+<div class="widget">
+  <div class="widget-title">📡 Widget — Sampling &amp; aliasing</div>
+  <div id="sampling-widget"></div>
+  <div class="widget-caption">
+    The blue curve is the continuous 5 Hz signal. Red dots are samples taken at your chosen rate. The red curve is what an algorithm reconstructing from <em>only the samples</em> would think the signal looked like.
+    Push the sample rate below 10 Hz (i.e. below Nyquist for a 5 Hz signal) and watch the reconstruction collapse into a slower-looking wave that doesn't exist in the original. That's aliasing.
+  </div>
+</div>
+
+<h3>Why 16 kHz for ASR specifically</h3>
+
+<p>If you look at every Parakeet config you'll see <code>sample_rate: 16000</code>. The choice is a pragmatic compromise:</p>
+<ul>
+<li>Telephony audio (8 kHz sample rate, ~300–3400 Hz channel passband) degrades sibilant and fricative cues and visibly hurts WER — though strong models still work passably on it.</li>
+<li>22.05/44.1 kHz audio doubles or triples the sample count for diminishing returns. Most phonetic information used by general ASR sits below 8 kHz; speech does have energy above that (frication detail, speaker/channel cues), but the compute cost is usually not justified for general-purpose transcription.</li>
+<li>16 kHz is the de-facto standard for ASR research, which means almost all training data is at this rate, which means models expect it. Whisper, Parakeet, Conformer, Wav2Vec — all 16 kHz.</li>
+</ul>
+
+<p>If your input is at a different rate, you must resample (using a polyphase or sinc filter) to 16 kHz before feeding the model. NeMo's preprocessor will do this automatically if needed.</p>
+
+<div class="callout">
+  <div class="callout-title">Nyquist caveat for engineers, not theorists</div>
+  The sampling theorem assumes the signal is <em>strictly bandlimited</em> below <code>fs/2</code>. Real signals never are. In practice the ADC chain includes an <em>anti-aliasing low-pass filter</em> with a finite transition band, so you sample above the theoretical minimum (e.g. 44.1 kHz for 20 kHz audio leaves room for the filter rolloff). The widget above shows samples reconstructed by straight-line interpolation, not the ideal sinc reconstruction the theorem assumes — that's why the "above Nyquist" cases look so bad. Real sinc reconstruction (or a polyphase resampler) recovers exact values at sample points and a well-behaved interpolation between them.
+</div>
+
+<div class="refs"><strong>📄 Read next</strong>: nothing yet — but if you want the rigorous treatment of sampling, Oppenheim &amp; Schafer, <em>Discrete-Time Signal Processing</em>, chapter 4, is the canonical source.</div>
+
+<h2 id="ch-fourier">5. The Fourier transform — the right intuition</h2>
+
+<p>The Fourier transform is the foundational tool of audio processing. The single most useful statement of it is:</p>
+
+<blockquote>Any reasonable function can be decomposed into a sum of sine waves of different frequencies, amplitudes, and phases. The Fourier transform finds the amplitudes and phases.</blockquote>
+
+<p>For a continuous signal $x(t)$:</p>
+
+$$X(f) = \int_{-\infty}^{\infty} x(t) \, e^{-2\pi i f t} \, dt$$
+
+<p>For a discrete signal of length $N$ (which is what we actually have), this becomes the <strong>Discrete Fourier Transform</strong>:</p>
+
+$$X[k] = \sum_{n=0}^{N-1} x[n] \, e^{-2\pi i k n / N}, \quad k = 0, 1, \ldots, N-1$$
+
+<p>Two things to understand about that formula:</p>
+
+<ol>
+<li>The complex exponential $e^{-2\pi i f t} = \cos(2\pi f t) - i \sin(2\pi f t)$ is just a way of encoding both a cosine and a sine into one number. The cosine measures the "in-phase" component, the sine measures the "90°-out-of-phase" component. Together they capture both amplitude and phase.</li>
+<li>The DFT is just $N$ inner products: $X[k]$ is the inner product of $x$ with the complex sinusoid of frequency $k$. If that sinusoid is "in" the signal, the inner product is large.</li>
+</ol>
+
+<p>You should think of the DFT not as a scary integral but as a change of basis: it takes a vector in the time-sample basis and rewrites it in a frequency basis. Both representations contain exactly the same information; you can invert one to the other.</p>
+
+<div class="widget">
+  <div class="widget-title">🎼 Widget — Build a signal from sines</div>
+  <p>Add or remove sine components and see what the time-domain signal looks like and what its Fourier transform (magnitude spectrum) looks like.</p>
+  <div id="fourier-widget"></div>
+  <div class="widget-caption">
+    Notice: a "spike" in the frequency spectrum corresponds to a pure sine wave in time. Adding many spikes gives you a more complex signal. The Fourier transform is what lets you go from one view to the other.
+  </div>
+</div>
+
+<h3>The Fast Fourier Transform (FFT)</h3>
+
+<p>The DFT as written above costs $O(N^2)$ operations. The FFT (Cooley-Tukey 1965) computes the same answer in $O(N \log N)$ by exploiting the recursive structure of the sinusoids. <strong>FFT is just a fast algorithm for the DFT; the math is identical.</strong> When you see <code>n_fft=512</code> in a Parakeet config, it means the FFT size is 512 samples. The analysis window itself is only 400 samples (25 ms at 16 kHz) — the remaining 112 samples are zero-padded, which gives the FFT a power-of-two length that the Cooley-Tukey radix-2 algorithm prefers, without actually adding new signal content.</p>
+
+<h3>What the FFT alone can't do</h3>
+
+<p>The DFT/FFT tells you what frequencies are in your <em>entire</em> signal, but not where in time they occurred. If you take a 10-second audio clip and FFT the whole thing, you get one number per frequency bin telling you the average energy at that frequency over the whole clip. The fact that the speaker said "cat" at second 1 and "dog" at second 5 is lost.</p>
+
+<p>For speech, we need time-localised frequency information. That's what the STFT is for.</p>
+
+<h2 id="ch-stft">6. The Short-Time Fourier Transform</h2>
+
+<p>The idea is brutally simple: chop the signal into short overlapping windows, FFT each window separately, stack the results.</p>
+
+<div class="diagram">
+audio:        ▁▂▃▅▆▇█▇▆▅▃▂▁▂▃▅▆▇█▇▆▅▃▂▁▂▃▅▆▇█▇▆▅▃▂▁
+window 1:    [════════════]
+window 2:         [════════════]
+window 3:              [════════════]
+window 4:                   [════════════]
+                ─────▶ for each window, FFT ─────▶ column of spectrogram
+</div>
+
+<p>The parameters of an STFT are:</p>
+<ul>
+<li><strong>Window size</strong> $W$ (samples): how long each window is. Parakeet uses 25 ms = 400 samples at 16 kHz. The FFT size is rounded up to a power of 2, hence <code>n_fft=512</code>.</li>
+<li><strong>Hop size</strong> $H$ (samples): how far we step between windows. Parakeet uses 10 ms = 160 samples. So adjacent windows overlap by 15 ms.</li>
+<li><strong>Window function</strong>: a tapered envelope (Hann, Hamming, etc.) we multiply the audio by before FFTing, to suppress edge artifacts. Parakeet uses Hann: $w[n] = 0.5(1 - \cos(2\pi n / (W-1)))$.</li>
+</ul>
+
+<p>The output is a 2D array: rows are frequency bins, columns are time frames. Take the magnitude (throw away phase) and you have a <strong>spectrogram</strong>.</p>
+
+<div class="widget">
+  <div class="widget-title">🌈 Widget — STFT explorer</div>
+  <p>Try different test signals and window sizes. Watch how window size trades off time resolution against frequency resolution — the Heisenberg-like trade-off at the heart of time-frequency analysis.</p>
+  <div id="stft-widget"></div>
+  <div class="widget-caption">
+    A short window → good time resolution (you can see exactly when things happen) but poor frequency resolution (frequencies blur together).
+    A long window → good frequency resolution but you lose the time location.
+    25 ms is the sweet spot for speech: long enough to resolve formants (~100 Hz wide) but short enough that within one window the spectrum is roughly stationary.
+  </div>
+</div>
+
+<h3>Why exactly 25 ms windows?</h3>
+
+<p>Speech is <em>locally stationary</em> on the order of 20–30 ms. The vocal tract changes shape on the time scale of phonemes (~50–200 ms), so within a 25 ms window you see basically one phonetic state. Make the window much shorter and you can't resolve the formant frequencies (the resonances of the vocal tract that distinguish vowels). Make it much longer and you blur across phoneme boundaries. 25 ms / 10 ms is folklore by now and every speech system uses it or something close.</p>
+
+<h2 id="ch-mel">7. The mel scale — making frequency match perception</h2>
+
+<p>The spectrogram from the STFT has linearly-spaced frequency bins: bin 0 is 0–31 Hz, bin 1 is 31–62 Hz, etc. (with <code>n_fft=512</code> and 16 kHz sample rate the bin width is $16000/512 \approx 31.25$ Hz).</p>
+
+<p>But human hearing is not linear in frequency. We are very sensitive to differences in the low frequencies (we can easily tell 100 Hz apart from 200 Hz) but progressively less sensitive in the high frequencies (5000 Hz vs 5100 Hz is indistinguishable). The <strong>mel scale</strong>, due to Stevens, Volkmann &amp; Newman (1937), is a perceptual frequency scale on which equal distances correspond to equal perceived pitch differences. A common formula is:</p>
+
+$$m(f) = 2595 \log_{10}\left(1 + \frac{f}{700}\right)$$
+
+<p>The mel scale is roughly linear below ~1000 Hz and roughly logarithmic above.</p>
+
+<div class="widget">
+  <div class="widget-title">📐 Widget — Mel vs linear filterbanks</div>
+  <p>Compare a uniform filterbank to a mel-spaced filterbank, with adjustable number of bins.</p>
+  <div id="mel-widget"></div>
+  <div class="widget-caption">
+    Notice how mel filterbanks pack densely below 1 kHz (where speech information is concentrated) and stretch out at high frequencies. Each triangular filter sums a band of FFT bins into a single mel coefficient.
+  </div>
+</div>
+
+<h3>From spectrogram to log-mel</h3>
+
+<p>The full transformation Parakeet applies is:</p>
+
+<ol>
+<li><strong>STFT</strong>: $X[k, t] = \text{FFT}(\text{window}_t \cdot \text{audio})$, output shape $[n_{\text{fft}}/2+1, T]$ = $[257, T]$.</li>
+<li><strong>Magnitude or power</strong>: $|X[k, t]|^2$ (Parakeet uses power).</li>
+<li><strong>Mel filterbank</strong>: apply a matrix multiplication $M \in \mathbb{R}^{n_{\text{mel}} \times 257}$ to convert 257 linear bins into $n_{\text{mel}}$ mel bins. Parakeet uses $n_{\text{mel}} = 80$.</li>
+<li><strong>Log</strong>: take $\log(\text{mel-spec} + \epsilon)$ to compress the dynamic range. Speech has 60+ dB of dynamic range; the log brings it into a friendlier numerical range.</li>
+<li><strong>Per-feature normalisation</strong>: subtract the per-utterance mean and divide by the per-utterance standard deviation, computed per mel bin. This makes the model robust to overall recording level and channel effects.</li>
+</ol>
+
+<p>The end result is a tensor of shape $[B, 80, T]$ where $T$ is the number of 10-ms frames. This is what gets fed into the FastConformer encoder.</p>
+
+<h2 id="ch-preproc">8. The full Parakeet preprocessor</h2>
+
+<p>Let's put it together with concrete numbers. Suppose we have a 10-second audio clip at 16 kHz.</p>
+
+<div class="pipeline" id="preproc-pipeline">
+  <div class="pipeline-stage" data-stage="raw" data-info="Input waveform sampled at 16 kHz. Shape [B, 160000] for a 10-second clip. Values normalised to roughly [-1, 1] float32.">
+    <div class="pipeline-stage-name">Waveform</div>
+    <div class="pipeline-stage-shape">[B, 160000]</div>
+  </div>
+  <div class="pipeline-arrow">▶</div>
+  <div class="pipeline-stage" data-stage="stft" data-info="Short-Time Fourier Transform with window=400 samples (25 ms), hop=160 samples (10 ms), n_fft=512. Output: 257 frequency bins × 1000 time frames. Each cell is a complex number.">
+    <div class="pipeline-stage-name">STFT</div>
+    <div class="pipeline-stage-shape">[B, 257, 1000]</div>
+  </div>
+  <div class="pipeline-arrow">▶</div>
+  <div class="pipeline-stage" data-stage="pow" data-info="Magnitude-squared of each STFT cell. Real-valued. This is the &ldquo;power spectrogram&rdquo;.">
+    <div class="pipeline-stage-name">|·|²</div>
+    <div class="pipeline-stage-shape">[B, 257, 1000]</div>
+  </div>
+  <div class="pipeline-arrow">▶</div>
+  <div class="pipeline-stage" data-stage="mel" data-info="Multiply by mel filterbank matrix [80, 257]. Compresses 257 linear bins into 80 perceptually-spaced mel bins.">
+    <div class="pipeline-stage-name">Mel proj</div>
+    <div class="pipeline-stage-shape">[B, 80, 1000]</div>
+  </div>
+  <div class="pipeline-arrow">▶</div>
+  <div class="pipeline-stage" data-stage="log" data-info="Take log of each value (with a small epsilon to avoid log(0)). Compresses dynamic range.">
+    <div class="pipeline-stage-name">log</div>
+    <div class="pipeline-stage-shape">[B, 80, 1000]</div>
+  </div>
+  <div class="pipeline-arrow">▶</div>
+  <div class="pipeline-stage" data-stage="norm" data-info="Per-feature normalisation: subtract the mean and divide by std per mel bin, computed across the time axis of each utterance. Makes the model robust to gain and channel variations.">
+    <div class="pipeline-stage-name">Normalise</div>
+    <div class="pipeline-stage-shape">[B, 80, 1000]</div>
+  </div>
+</div>
+<div class="pipeline-detail" id="preproc-detail">Click any stage above to see what it does and why.</div>
+
+<p>The output is the input to the encoder. From this point on, everything is learned. Note that the entire preprocessing pipeline above is deterministic and has zero learnable parameters.</p>
+
+<div class="refs"><strong>📄 In <code>./papers/</code></strong>: nothing specific to feature extraction here — it's all DSP folklore. For deep treatment see Rabiner &amp; Schafer, <em>Theory and Applications of Digital Speech Processing</em>, chapter 6. For Parakeet's exact config, see the NeMo <code>AudioToMelSpectrogramPreprocessor</code> class.</div>
+
+<h2 id="ch-specaug">9. SpecAugment — masking as augmentation</h2>
+
+<p>SpecAugment (Park et al. 2019) is a data augmentation method applied <em>at the spectrogram level</em>, between the preprocessor and the encoder. It does two simple things:</p>
+
+<ul>
+<li><strong>Frequency masking</strong>: zero out a contiguous band of mel bins for the whole utterance. Bandwidth chosen uniformly from $[0, F]$ where $F=27$ for Parakeet. Repeat up to 2 times.</li>
+<li><strong>Time masking</strong>: zero out a contiguous range of time frames for all mel bins. Width chosen uniformly from $[0, p \cdot T]$ where $p = 0.05$. Repeat up to 10 times.</li>
+</ul>
+
+<p>That's it. It's astonishingly effective — comparable to a 2× increase in training data.</p>
+
+<div class="widget">
+  <div class="widget-title">🩹 Widget — SpecAugment in action</div>
+  <p>Click the buttons to apply masks. This is exactly what the model sees during training.</p>
+  <div id="specaug-widget"></div>
+  <div class="widget-caption">
+    Why does this help? The model is forced to use redundant information. If it has come to rely on (say) the formant energy at 800 Hz to recognise the vowel /æ/, freq-masking that band forces it to also learn to recognise /æ/ from other cues. Robustness to band-limited noise and to brief acoustic dropouts comes for free.
+  </div>
+</div>
+
+<div class="refs">
+  <strong>📄 In <code>./papers/</code></strong>: <code>08_SpecAugment_1904.08779.pdf</code> (Park et al., Interspeech 2019). The original paper, very readable. Section 3 has the exact recipe. Note that Parakeet uses the &ldquo;LB (LibriSpeech basic)&rdquo; policy: <code>(W=0, F=27, mF=2, T=p·T_utt, p=0.05, mT=10)</code>.
+</div>
+
+<!-- =========================================================== -->
+<img class="part-hero" src="diagrams/03-part-iii-building-blocks.png" alt="Part III — Neural Building Blocks: title card showing a 1D convolution kernel sliding over a sequence alongside a self-attention matrix">
+<div class="part-title">Part III · Neural building blocks</div>
+
+<h2 id="ch-conv">10. 1D convolutions for sequence data</h2>
+
+<p>You probably first learned about convolutions in the 2D image setting. For audio we use the 1D version. The mechanics are the same, just one fewer dimension.</p>
+
+<p>A 1D convolution layer takes an input of shape $[B, C_{\text{in}}, T]$ and produces an output of shape $[B, C_{\text{out}}, T']$, where:</p>
+<ul>
+<li>$B$ is batch size</li>
+<li>$C_{\text{in}}$ and $C_{\text{out}}$ are input and output channels (in our case, mel bins or hidden dimensions)</li>
+<li>$T$ and $T'$ are the time lengths</li>
+</ul>
+
+<p>The math: for each output channel $c$ and each output time step $t$,</p>
+
+$$y[b, c, t] = \sum_{c'=0}^{C_{\text{in}}-1} \sum_{k=0}^{K-1} W[c, c', k] \cdot x[b, c', s \cdot t + k - p]$$
+
+<p>where $K$ is the kernel size, $s$ is the stride, $p$ is padding. The kernel $W$ has shape $[C_{\text{out}}, C_{\text{in}}, K]$, which is $C_{\text{out}} \cdot C_{\text{in}} \cdot K$ parameters.</p>
+
+<div class="widget">
+  <div class="widget-title">🧩 Widget — 1D convolution visualised</div>
+  <p>Slide a kernel over a 1D signal. Adjust kernel size and stride to see how output length changes.</p>
+  <div id="conv-widget"></div>
+  <div class="widget-caption">
+    Output length with stride $s$, kernel $K$, no padding, input length $T$: <code>T' = floor((T - K)/s) + 1</code>. With "same" padding (Parakeet's default for the conv module): <code>T' = ceil(T/s)</code>.
+  </div>
+</div>
+
+<p>In Parakeet, 1D convolutions appear in two roles:</p>
+<ol>
+<li><strong>Subsampling</strong>: at the very front of the encoder, three stacked stride-2 1D convs cut the sequence length by 8× while expanding the channel dimension.</li>
+<li><strong>Inside each Conformer block</strong>: a depthwise 1D conv of kernel size 9 (in FastConformer; 31 in the original Conformer) provides local context mixing inside each block.</li>
+</ol>
+
+<h2 id="ch-dwsep">11. Depthwise and separable convolutions</h2>
+
+<p>A standard 1D convolution layer with $C_{\text{in}} = C_{\text{out}} = 256$ and $K = 9$ has $256 \times 256 \times 9 = 589{,}824$ parameters and proportional FLOPs. If we do this many times we burn a lot of compute on the convolutions alone.</p>
+
+<p><strong>Depthwise</strong> convolution: each input channel gets its own independent kernel. No cross-channel mixing. Parameter count: $C \times K$. With $C=256, K=9$: only 2,304 parameters — a 256× reduction.</p>
+
+<p><strong>Pointwise</strong> convolution: a kernel of size 1 that mixes across channels. Parameter count: $C_{\text{in}} \times C_{\text{out}} \times 1$.</p>
+
+<p><strong>Depthwise-separable</strong> convolution: depthwise followed by pointwise. Total: $C \cdot K + C^2$ parameters. For $C=256, K=9$: $2{,}304 + 65{,}536 = 67{,}840$ — almost 9× cheaper than the equivalent full convolution.</p>
+
+<div class="widget">
+  <div class="widget-title">🧮 Widget — Parameter count calculator</div>
+  <div id="param-calc-widget"></div>
+  <div class="widget-caption">
+    Adjust the parameters to see what a full conv vs depthwise vs depthwise-separable costs. FastConformer's 8× subsampling uses depthwise-separable convs with only 256 channels and kernel 9 specifically because the parameter savings here compound through the model.
+  </div>
+</div>
+
+<p>Inside the Conformer block, there's actually a <em>third</em> variant: a depthwise conv flanked by two pointwise convs, with a GLU activation in between. We'll see that in chapter 17.</p>
+
+<h2 id="ch-attn">12. Self-attention from scratch</h2>
+
+<p>Self-attention is the mechanism that lets every position in a sequence look at every other position and decide what's relevant. The math is short:</p>
+
+$$\text{Attention}(Q, K, V) = \text{softmax}\left(\frac{QK^\top}{\sqrt{d_k}}\right) V$$
+
+<p>Unpacking it. Suppose the input sequence is $X \in \mathbb{R}^{T \times d}$. We project it three ways using learned matrices $W_Q, W_K, W_V \in \mathbb{R}^{d \times d_k}$:</p>
+
+$$Q = X W_Q, \quad K = X W_K, \quad V = X W_V$$
+
+<p>Now $Q, K, V \in \mathbb{R}^{T \times d_k}$. Each row of $Q$ is a "query" — a description of what that position is looking for. Each row of $K$ is a "key" — a description of what that position offers. Each row of $V$ is a "value" — the actual content that will be pulled out.</p>
+
+<p>The matrix $QK^\top$ has shape $[T, T]$: entry $(i, j)$ is the dot product of query $i$ with key $j$ — how well "what position $i$ is looking for" matches "what position $j$ offers". The softmax over each row turns these scores into a probability distribution. Multiplying by $V$ then computes, for each output position, a weighted average of values, weighted by attention.</p>
+
+<p>The $\sqrt{d_k}$ scaling exists so that, with random initialisation, the dot products have unit variance regardless of $d_k$. Without it, the softmax saturates for large $d_k$ and gradients vanish.</p>
+
+<div class="widget">
+  <div class="widget-title">🔍 Widget — Attention heatmap</div>
+  <p>Eight tokens. Each row is one query position attending to all eight keys. Hover over cells to see scores. Click a query position to see what it ends up "looking at".</p>
+  <div id="attention-widget"></div>
+  <div class="widget-caption">
+    This is a toy setup with random queries and keys, but the geometry is exactly what a real attention layer computes. The whole layer can be done in two matrix multiplies (<code>QK^T</code> and <code>scores @ V</code>) plus a softmax — wildly parallel and very GPU-friendly. That's why Transformers replaced RNNs.
+  </div>
+</div>
+
+<h3>Computational cost</h3>
+
+<p>The $QK^\top$ matrix has $T^2$ entries. For a 24-minute audio at 80 ms frame rate, $T = 18{,}000$, so we'd have $3.24 \times 10^8$ entries <em>per attention head per layer</em>. This is the quadratic-attention problem and is the whole motivation for the long-form attention techniques in chapter 19.</p>
+
+<h2 id="ch-mha">13. Multi-head attention</h2>
+
+<p>A single attention head computes one weighted average per position. <strong>Multi-head</strong> attention runs $h$ heads in parallel, each with smaller $d_k = d/h$ projections, then concatenates the results.</p>
+
+$$\text{MHA}(X) = \text{Concat}(\text{head}_1, \ldots, \text{head}_h) W_O$$
+
+<p>where $W_O \in \mathbb{R}^{d \times d}$ is a final output projection. Parakeet uses $h = 8$ heads with $d_{\text{model}} = 512$ for the Large variant, so $d_k = 64$ per head. For the 0.6B XL variant: $h = 8$, $d_{\text{model}} = 1024$, $d_k = 128$.</p>
+
+<p>Why multi-head? Empirically, different heads learn different relationships — some heads track phonetic context, some track syntactic structure, some attend to specific positions like sentence boundaries. Forcing the model to commit to a single attention pattern per layer reduces capacity; multiple heads let it learn several at once.</p>
+
+<p>The parameter cost is the same as single-head with the same total dimension (because the per-head projection matrices shrink as $h$ grows), but you get $h$ different attention patterns for free.</p>
+
+<h2 id="ch-pe">14. Positional encoding — why it matters</h2>
+
+<p>Without positional information, self-attention is <em>permutation-equivariant</em>: if you permute the input sequence, the output is permuted the same way. It has no intrinsic notion that one token came before another. This is a disaster for sequence modelling, because <code>"dog bites man"</code> and <code>"man bites dog"</code> should produce different outputs.</p>
+
+<p>So we need to <em>tell</em> the model what position each token is at. The original Transformer (Vaswani 2017) added fixed sinusoidal position embeddings:</p>
+
+$$\text{PE}[t, 2i] = \sin(t / 10000^{2i/d}), \quad \text{PE}[t, 2i+1] = \cos(t / 10000^{2i/d})$$
+
+<p>and just added these to the token embeddings before the first attention layer. Each position gets a unique pattern of sines/cosines at different frequencies.</p>
+
+<div class="widget">
+  <div class="widget-title">🌀 Widget — Sinusoidal positional encoding</div>
+  <p>Visualisation of the PE matrix. Each row is one position; each column is one dimension. Low-dim columns oscillate slowly (encoding coarse position), high-dim columns oscillate quickly (encoding fine position).</p>
+  <div id="pe-widget"></div>
+  <div class="widget-caption">
+    The clever property: $\text{PE}[t+k]$ can be expressed as a linear function of $\text{PE}[t]$, so the model can in principle learn to attend by relative offset. But in practice <em>absolute</em> positions baked into the input are limiting — see the next chapter.
+  </div>
+</div>
+
+<h3>The problem with absolute positional encodings for ASR</h3>
+
+<p>You train on 30-second utterances, position 0–375 (at 80 ms frame rate). At inference you want to handle a 24-minute clip — position 18,000. The model has never seen positions that large; the sinusoidal pattern is technically defined there, but the attention weights were trained on a tiny range. Quality degrades — often catastrophically, sometimes only modestly, depending on architecture, normalization, and training-length distribution.</p>
+
+<p>The standard fix is to make the model see only <em>relative</em> positions ("how far apart are these two frames") not absolute positions ("what frame number is this"). That's what Transformer-XL relative positional encoding does. Relpos is one ingredient in long-form generalisation; the others (chunked/windowed attention, global tokens, training length curriculum) are covered in chapter 19.</p>
+
+<h2 id="ch-relpos">15. Transformer-XL relative positional encoding</h2>
+
+<p>This is the most algebraically dense chapter in the document. Take a deep breath. We will derive it from scratch.</p>
+
+<p>Recall the standard absolute-position attention. We compute the score between query position $i$ and key position $j$ as a dot product of two vectors that <em>each</em> contain both content and positional information. If we let $E_x$ be the content embedding and $U$ be the position embedding, the input vector at position $i$ is $E_{x_i} + U_i$. Then the attention score is:</p>
+
+$$A^{\text{abs}}_{ij} = (E_{x_i} + U_i)^\top W_Q^\top W_K (E_{x_j} + U_j)$$
+
+<p>Expand this. It gives four terms:</p>
+
+$$A^{\text{abs}}_{ij} = \underbrace{E_{x_i}^\top W_Q^\top W_K E_{x_j}}_{\text{(a) content–content}} + \underbrace{E_{x_i}^\top W_Q^\top W_K U_j}_{\text{(b) content–pos}} + \underbrace{U_i^\top W_Q^\top W_K E_{x_j}}_{\text{(c) pos–content}} + \underbrace{U_i^\top W_Q^\top W_K U_j}_{\text{(d) pos–pos}}$$
+
+<p>The Transformer-XL trick (Dai et al. 2019) is to make three changes that turn this into a <strong>relative</strong> formulation:</p>
+
+<ol>
+<li>In terms (b) and (d), replace the absolute position $U_j$ with a sinusoidal vector $R_{i-j}$ that depends only on the relative distance.</li>
+<li>In terms (c) and (d), replace $U_i^\top W_Q^\top$ — which depends on the absolute query position — with a learnable global bias vector. Use $u^\top$ in the term that ends with $E_{x_j}$ (the "global content bias") and $v^\top$ in the term that ends with $R_{i-j}$ (the "global position bias").</li>
+<li>Use a <em>separate</em> projection matrix $W_R$ for the relative position embeddings, so that the content vs position projections don't have to share weights and fight each other.</li>
+</ol>
+
+<p>The result:</p>
+
+$$A^{\text{rel}}_{ij} = \underbrace{E_{x_i}^\top W_Q^\top W_K E_{x_j}}_{\text{(a) content–content}} + \underbrace{E_{x_i}^\top W_Q^\top W_R R_{i-j}}_{\text{(b) content–position}} + \underbrace{u^\top W_K E_{x_j}}_{\text{(c) global content bias}} + \underbrace{v^\top W_R R_{i-j}}_{\text{(d) global position bias}}$$
+
+<p>Term-by-term interpretation:</p>
+
+<ul>
+<li><strong>(a)</strong> "How much does the content at position $i$ care about the content at position $j$, ignoring position entirely?"</li>
+<li><strong>(b)</strong> "How much does the content at position $i$ care about being at a distance $i-j$ from another token?"</li>
+<li><strong>(c)</strong> A global bias from $u$: "How much does <em>everyone</em> attend to the content $E_{x_j}$?" Useful for learning to up- or down-weight common keys.</li>
+<li><strong>(d)</strong> A global bias from $v$: "How much does <em>everyone</em> attend to a key at relative distance $i-j$?" This is where the model learns things like &ldquo;attend more strongly to nearby frames&rdquo; or &ldquo;decay with distance&rdquo;.</li>
+</ul>
+
+<p>The model never sees an absolute position. Train on 30-second utterances and the relative distances range over a few hundred values; inference on 24 minutes uses larger relative distances, but the sinusoidal $R$ is defined for arbitrary distances and the model's learned attention pattern (in terms of distance) generalises smoothly.</p>
+
+<p>In the NeMo Conformer config you see this as:</p>
+<pre><code>self_attention_model: rel_pos
+n_heads: 8
+untie_biases: true     # separate u, v per layer
+pos_emb_max_len: 5000  # max relative distance precomputed</code></pre>
+
+<div class="callout deep">
+  <div class="callout-title">Why this matters operationally</div>
+  Without relative positional encoding, the model trained on 30-second utterances simply cannot do long-form transcription. With it, FastConformer + limited-context attention can transcribe a 13-hour audio file in a single pass. The relpos trick is what makes the entire long-form story possible.
+</div>
+
+<div class="refs">
+  <strong>📄 In <code>./papers/</code></strong>:
+  <ul style="margin:0.4em 0">
+    <li><code>06_TransformerXL_1901.02860.pdf</code> — Section 3.3 is the relpos derivation. Read it after this chapter.</li>
+    <li><code>07_AttentionIsAllYouNeed_1706.03762.pdf</code> — Section 3.5 has the original sinusoidal PE for comparison.</li>
+  </ul>
+</div>
+
+<h2 id="ch-norms">16. Layer normalisation, residuals, and the macaron sandwich</h2>
+
+<p>Three small but important architectural patterns appear repeatedly in Conformer blocks.</p>
+
+<h3>LayerNorm</h3>
+
+<p>For an input vector $x \in \mathbb{R}^d$ (one position, one batch element):</p>
+
+$$\text{LN}(x) = \gamma \odot \frac{x - \mu}{\sqrt{\sigma^2 + \epsilon}} + \beta$$
+
+<p>where $\mu, \sigma^2$ are the mean and variance computed over $d$, and $\gamma, \beta \in \mathbb{R}^d$ are learned. LayerNorm normalises across the feature dimension, per-token, so it's independent of batch size and sequence length. This is critical for variable-length sequence models — batch norm would couple the normalisation to other examples in the batch and to padding.</p>
+
+<h3>Residual connections</h3>
+
+<p>$y = x + f(x)$. Trivially simple, profoundly important. He et al. (2015) showed that adding the input to the output of a layer makes very deep networks trainable, because gradients can flow back along the identity path even if $f(x)$'s gradient vanishes.</p>
+
+<h3>Pre-norm vs post-norm</h3>
+
+<p>Should LayerNorm sit before $f$ or after?</p>
+<ul>
+<li><strong>Post-norm</strong>: $y = \text{LN}(x + f(x))$. The original Transformer. Tends to be unstable to train at large depth without careful warmup.</li>
+<li><strong>Pre-norm</strong>: $y = x + f(\text{LN}(x))$. The modern default. More stable, easier to scale.</li>
+</ul>
+
+<p>Conformer uses pre-norm throughout.</p>
+
+<h3>The macaron sandwich</h3>
+
+<p>The original Transformer block is: $x \to \text{MHA} \to \text{FFN} \to y$, with residual + LN around each. The Conformer block uses a <strong>macaron</strong> structure: it splits the FFN into two half-step FFNs that sandwich the attention and convolution modules.</p>
+
+<div class="diagram">
+ORIGINAL TRANSFORMER:    x ──▶ MHA ──▶ FFN ──▶ y
+                                   (with residual+LN around each)
+
+CONFORMER (macaron):     x ──▶ ½·FFN ──▶ MHA ──▶ ConvModule ──▶ ½·FFN ──▶ LN ──▶ y
+                                   (with residual around each, pre-norm)
+</div>
+
+<p>Why "½ FFN"? Each half-FFN's residual contribution is scaled by 0.5: $y = x + 0.5 \cdot \text{FFN}(\text{LN}(x))$. The justification comes from <a href="papers/10_Macaron_1906.02762.pdf">Macaron-Net (Lu et al. 2019)</a>, which interprets the Transformer's residual stream as a discretisation of an ODE. Strang splitting for ODEs suggests that a symmetric structure of half-steps around a central operation has better numerical properties than a sequence of full steps. In practice the macaron form gives a small but reliable WER improvement at the same parameter count.</p>
+
+<div class="refs">
+  <strong>📄 In <code>./papers/</code></strong>: <code>10_Macaron_1906.02762.pdf</code>. Skim section 4 for the ODE perspective; the rest is fascinating but optional for understanding Conformer.
+</div>
+
+<!-- =========================================================== -->
+<img class="part-hero" src="diagrams/04-part-iv-encoder.png" alt="Part IV — The Encoder: title card showing a single Conformer block exploded vertically with the half-step feed-forward, multi-head self-attention, convolution module, and second half-step feed-forward arranged in the macaron sandwich">
+<div class="part-title">Part IV · The encoder</div>
+
+<h2 id="ch-conformer">17. The Conformer block, dissected</h2>
+
+<p>Now we put the building blocks together. A Conformer block (Gulati et al. 2020) is:</p>
+
+<div class="widget">
+  <div class="widget-title">🏗️ Widget — Conformer block walkthrough</div>
+  <p>Click each component to see what it does and its tensor shape. The block takes an input of shape $[B, T, d]$ and returns an output of the same shape.</p>
+  <div id="conformer-widget"></div>
+</div>
+
+<p>The math of one block, from input $x_0$ to output $x_4$:</p>
+
+$$\begin{aligned}
+x_1 &= x_0 + \tfrac{1}{2} \, \text{FFN}_1(\text{LN}(x_0)) \\
+x_2 &= x_1 + \text{MHSA}_{\text{relpos}}(\text{LN}(x_1)) \\
+x_3 &= x_2 + \text{ConvMod}(\text{LN}(x_2)) \\
+x_4 &= \text{LN}(x_3 + \tfrac{1}{2} \, \text{FFN}_2(\text{LN}(x_3)))
+\end{aligned}$$
+
+<h3>The FFN module</h3>
+
+<p>A position-wise feedforward network with an expansion factor of 4:</p>
+
+$$\text{FFN}(x) = \text{Dropout}(W_2 \cdot \text{Swish}(W_1 x + b_1) + b_2)$$
+
+<p>where $W_1 \in \mathbb{R}^{4d \times d}, W_2 \in \mathbb{R}^{d \times 4d}$. Swish is $x \cdot \sigma(x)$, basically a smoother ReLU.</p>
+
+<h3>The Convolution module</h3>
+
+<p>This is the part that makes Conformer "conformer" — it gives every block direct access to local temporal context, not just global attention.</p>
+
+<div class="diagram">
+input [B, T, d]
+   │
+   ▼ LayerNorm
+   ▼ Pointwise Conv (d → 2d)             # expand to 2× channels
+   ▼ GLU activation                       # gated linear unit: split halves, σ-gate one with the other
+   ▼ Depthwise Conv1d (kernel=9, 256/512/1024 channels)   # FastConformer: kernel 9; original Conformer: 31
+   ▼ BatchNorm                            # (or LayerNorm, configurable)
+   ▼ Swish
+   ▼ Pointwise Conv (d → d)
+   ▼ Dropout
+output [B, T, d]
+</div>
+
+<p>The GLU (Gated Linear Unit, Dauphin et al. 2017) takes a tensor of $2d$ channels, splits it into two tensors of $d$ channels each, and returns $a \odot \sigma(b)$ — an element-wise product where the second half acts as a learned gate on the first half. It gives the convolution module a multiplicative interaction without the cost of squaring the channel dimension.</p>
+
+<p>The depthwise conv with kernel 9 looks at $\pm 4$ frames around each position. At 80 ms per frame that's ~720 ms of context. Enough to capture syllable-scale structure and short-range coarticulation effects that pure attention sometimes misses.</p>
+
+<h2 id="ch-fastconf">18. FastConformer — the optimised variant</h2>
+
+<p>FastConformer (Rekesh et al. 2023, paper 01) is the encoder Parakeet actually uses. It's Conformer with four changes:</p>
+
+<table>
+<tr><th>Change</th><th>Conformer</th><th>FastConformer</th><th>Effect</th></tr>
+<tr><td>Subsampling factor</td><td>4× (40 ms frames)</td><td>8× (80 ms frames)</td><td>Half the encoder sequence length → ¼ the attention FLOPs</td></tr>
+<tr><td>Subsampling convs</td><td>2× stride-2 standard convs</td><td>3× stride-2 depthwise-separable convs</td><td>Smaller, faster subsampler</td></tr>
+<tr><td>Subsampler channels</td><td>typically 512</td><td>256</td><td>Reduces stem parameter count</td></tr>
+<tr><td>Conv kernel size</td><td>31</td><td>9</td><td>Smaller conv module, marginal WER impact</td></tr>
+</table>
+
+<p>The headline result: <strong>2.4–2.8× faster than Conformer at equivalent WER.</strong> All four changes are independently small; their compounding is what delivers the speedup.</p>
+
+<h3>The 8× subsampling stem</h3>
+
+<p>The first thing the encoder does is run three stride-2 depthwise-separable convolutions, expanding from the 80 mel inputs to 256 channels:</p>
+
+<div class="diagram">
+mel features [B, 80, T_in]              T_in = 1000 frames (10 s at 10 ms hop)
+   ▼ DW-sep Conv stride 2, kernel 9 → 256 channels
+   [B, 256, T_in/2]                     T = 500 frames (20 ms)
+   ▼ DW-sep Conv stride 2, kernel 9
+   [B, 256, T_in/4]                     T = 250 frames (40 ms)
+   ▼ DW-sep Conv stride 2, kernel 9
+   [B, 256, T_in/8]                     T = 125 frames (80 ms)
+   ▼ Linear projection to d_model
+   [B, T_in/8, 1024]
+   ▼ × N Conformer blocks
+output [B, T_in/8, 1024]
+</div>
+
+<p>After subsampling, each "frame" represents 80 ms of audio. A 24-minute audio is ~144,000 pre-subsampling mel frames (at 10 ms hop) → ~18,000 encoder frames (at 80 ms hop). A 10-second utterance is ~1,000 mel frames → ~125 encoder frames. The encoder doesn't care about input length; it just processes a $[B, T, d]$ tensor and returns another $[B, T, d]$ tensor. (Exact lengths depend on STFT centering and conv padding; treat these as ≈ values.)</p>
+
+<h3>Concrete configurations</h3>
+
+<table>
+<tr><th>Model</th><th>Layers</th><th>$d_{\text{model}}$</th><th>Heads</th><th>FFN dim</th><th>Encoder params</th></tr>
+<tr><td>FastConformer Large (120M)</td><td>17</td><td>512</td><td>8</td><td>2048</td><td>~110M</td></tr>
+<tr><td>FastConformer XL (Parakeet 0.6B)</td><td>24</td><td>1024</td><td>8</td><td>4096</td><td>~570M</td></tr>
+<tr><td>FastConformer XXL (Parakeet 1.1B)</td><td>42</td><td>1024</td><td>8</td><td>4096</td><td>~1.0B</td></tr>
+</table>
+
+<p>The decoder (TDT or RNN-T) adds 20-50M parameters depending on the prediction-network LSTM hidden size and the joint network projection dim.</p>
+
+<div class="refs">
+  <strong>📄 In <code>./papers/</code></strong>: <code>01_FastConformer_2305.05084.pdf</code>. Section 3 is the architecture changes; section 4 has the speed/quality measurements. Section 5 covers the long-form attention story, which is the next chapter.
+</div>
+
+<h2 id="ch-longform">19. Long audio: limited context attention and global tokens</h2>
+
+<p>Full self-attention on 18,000 encoder frames is $18{,}000^2 \approx 3.24 \times 10^8$ entries per head per layer. With 8 heads, fp16, the attention matrix for a single layer is already ~5 GB per batch element; for training you also store activations across all 24 layers (~120 GB worst case for backprop), and even at inference the per-layer scratch plus KV state can saturate an A100. The headline number depends on whether you're counting <em>per-layer peak</em> (small enough for full attention up to ~24 minutes on Parakeet-v2 on an 80 GB A100) or <em>training-time activation cumulative</em> (much larger).</p>
+
+<p>The point is: naively materialising the $T \times T$ attention matrix scales as $O(T^2)$, and you eventually run out of memory or budget. Parakeet's long-form variants avoid that with two ideas:</p>
+
+<h3>Limited Context Attention (LCA)</h3>
+
+<p>Each query position attends only to keys within a window of $L$ frames to the left and $R$ frames to the right. Cost drops from $O(T^2)$ to $O(T \cdot (L+R))$, linear in $T$.</p>
+
+<h3>Global tokens</h3>
+
+<p>A handful of learnable "global" tokens are concatenated to the sequence. They attend to and are attended to by every other position. This restores the model's ability to aggregate utterance-level context that the windowed local attention destroys.</p>
+
+<p>Together these are exactly the Longformer pattern (Beltagy, Peters &amp; Cohan 2020):</p>
+
+<div class="widget">
+  <div class="widget-title">🔭 Widget — Attention pattern explorer</div>
+  <p>Toggle between full, sliding-window, and sliding-window + global-tokens attention. See the connectivity matrix and the cost.</p>
+  <div id="longform-widget"></div>
+  <div class="widget-caption">
+    The cells filled in grey are computed. Cells in white are masked out (set to $-\infty$ before softmax). Full attention computes $T^2$ scores; windowed attention computes $T \cdot (L+R)$; windowed + $G$ globals computes $T \cdot (L+R) + 2TG$. For $T=18{,}000$ (~24 min), $L=R=128$, $G=4$: full = 324M scores per head; windowed+global = 4.75M — a ~68× reduction.
+  </div>
+</div>
+
+<p>Concretely, Parakeet trains the long-form variants with <code>att_context_size: [128, 128]</code> and a small number of global tokens (typically 4). At inference, the 1.1B model can transcribe 12.5 hours of audio in a single pass on an 80 GB A100. The 0.6B model gets 13 hours.</p>
+
+<p>The <em>full-attention</em> Parakeet-TDT-0.6B-v2 (the one on the OpenASR leaderboard) doesn't use LCA — it just caps single-pass input at ~24 minutes and uses chunking for longer files. The leaderboard scores benefit from full attention; the long-form variants benefit from LCA. They're different optimisation points.</p>
+
+<div class="refs">
+  <strong>📄 In <code>./papers/</code></strong>:
+  <ul style="margin:0.4em 0">
+    <li><code>09_Longformer_2004.05150.pdf</code> — for the windowed + global attention pattern.</li>
+    <li><code>11_LongFormASR_2309.09950.pdf</code> — Koluguri et al. on putting it together for ASR specifically. Section 4 has the global token results.</li>
+  </ul>
+</div>
+
+<!-- =========================================================== -->
+<img class="part-hero" src="diagrams/05-part-v-decoders.png" alt="Part V — The Decoders: title card showing three sequence alignment lattices side by side comparing CTC, RNN-T, and TDT decoders">
+<div class="part-title">Part V · The decoders</div>
+
+<h2 id="ch-decode-intro">20. Three ways to turn encoder frames into text</h2>
+
+<p>The encoder has done its job: it took a $[B, T_{\text{in}}, 80]$ mel-spectrogram and produced a $[B, T, d]$ encoded sequence at 80 ms frame rate. Now we need to convert that into a token sequence — the transcript.</p>
+
+<p>Three families of decoder exist in the Parakeet codebase:</p>
+
+<table>
+<tr><th>Decoder</th><th>Train cost</th><th>Inference cost</th><th>Accuracy</th><th>Streaming</th><th>Timestamps</th></tr>
+<tr><td><strong>CTC</strong></td><td>Cheap</td><td>Fastest</td><td>Lowest (needs LM for parity)</td><td>Trivial</td><td>Per-frame, coarse</td></tr>
+<tr><td><strong>RNN-T</strong></td><td>Expensive</td><td>Fast</td><td>High</td><td>Yes</td><td>Per-token, good</td></tr>
+<tr><td><strong>TDT</strong></td><td>Expensive</td><td>Fastest</td><td>Highest</td><td>Yes</td><td>Per-token, with durations</td></tr>
+</table>
+
+<p>The Parakeet family ships checkpoints for all three. <code>parakeet-tdt-0.6b-v2</code> (the OpenASR leader) uses TDT. <code>parakeet-rnnt-1.1b</code> uses RNN-T. <code>parakeet-ctc-1.1b</code> uses CTC. Same encoder, different decoders.</p>
+
+<p>We'll build up the math in the order they were invented: CTC first, then RNN-T as a strict generalisation, then TDT as a clever extension of RNN-T.</p>
+
+<h2 id="ch-ctc">21. CTC, derived from first principles</h2>
+
+<p>Connectionist Temporal Classification (Graves et al. 2006) was the first method that let you train a neural ASR system on unaligned <code>(audio, transcript)</code> pairs without needing a forced aligner.</p>
+
+<h3>The setup</h3>
+
+<p>The CTC decoder is just a linear layer projecting each encoder frame to $|V|+1$ logits, where $V$ is the vocabulary and the extra slot is a special token called <strong>blank</strong> (written $\varnothing$). At each frame the model produces a probability distribution over $V \cup \{\varnothing\}$.</p>
+
+<p>So for each frame we get one symbol. With $T$ encoder frames we get a sequence $\pi = (\pi_1, \ldots, \pi_T)$ of length $T$, called an <strong>alignment</strong>. Each $\pi_t \in V \cup \{\varnothing\}$.</p>
+
+<h3>The collapse rule</h3>
+
+<p>To go from an alignment $\pi$ to a transcript $y$, apply this function $\mathcal{B}$:</p>
+
+<ol>
+<li>Collapse runs of consecutive identical labels into one.</li>
+<li>Remove all blanks.</li>
+</ol>
+
+<p>Examples (for target "CAT" with T=8):</p>
+<ul>
+<li><code>CCAATT__</code> → <code>CAT</code> ✓</li>
+<li><code>_C_A_T__</code> → <code>CAT</code> ✓</li>
+<li><code>CCCAA_TT</code> → <code>CAT</code> ✓</li>
+<li><code>CCATTAT_</code> → <code>CATAT</code> ✗ (wrong)</li>
+<li><code>CATT_CCC</code> → <code>CATC</code> ✗ (wrong)</li>
+</ul>
+
+<p>Note that for a target like "AA" (with two identical adjacent characters), you <em>must</em> have a blank between the two A's in the alignment, otherwise the collapse rule will merge them. This is the entire reason blanks exist.</p>
+
+<h3>The probability of a transcript</h3>
+
+<p>The CTC objective for a single $(x, y)$ pair is to maximise the probability of $y$, which is the sum over all alignments $\pi$ that collapse to $y$:</p>
+
+$$P(y \mid x) = \sum_{\pi \in \mathcal{B}^{-1}(y)} \prod_{t=1}^{T} P(\pi_t \mid x)$$
+
+<p>This formula assumes <strong>conditional independence</strong> of the per-frame predictions given $x$, which is why CTC needs an external language model to do well — the model itself does not learn dependencies between output tokens.</p>
+
+<h3>The forward-backward algorithm</h3>
+
+<p>The number of alignments grows combinatorially with $T$ — we can't enumerate them. But the sum has factorised structure, so we use dynamic programming.</p>
+
+<p>Define an <strong>extended target</strong> $y'$ by inserting blanks around and between every label in $y$: for $y = $ "CAT", $y' = $ "_C_A_T_". Length $|y'| = 2|y|+1 = 7$.</p>
+
+<p>Define the forward variable $\alpha_t(s)$ as the total probability of all alignments ending at the $s$-th position of $y'$ after $t$ encoder frames:</p>
+
+$$\alpha_t(s) = \sum_{\substack{\pi_1, \ldots, \pi_t \\ \text{ending at } y'_s \text{ after collapse}}} \prod_{t'=1}^{t} P(\pi_{t'} \mid x)$$
+
+<p>The recursion is:</p>
+
+$$\alpha_t(s) = (\alpha_{t-1}(s) + \alpha_{t-1}(s-1)) \cdot P(y'_s \mid x_t) \quad \text{if } y'_s \text{ is blank or } y'_s = y'_{s-2}$$
+$$\alpha_t(s) = (\alpha_{t-1}(s) + \alpha_{t-1}(s-1) + \alpha_{t-1}(s-2)) \cdot P(y'_s \mid x_t) \quad \text{otherwise}$$
+
+<p>The first rule says: if you're on a blank, you can stay (same state) or come from one back. If you're on a label and the label two back is the same, you also can't skip the intermediate blank — that's the blank-separator rule.</p>
+
+<p>The total probability is $P(y\mid x) = \alpha_T(|y'|) + \alpha_T(|y'|-1)$ (you can end on the last label or on the final blank).</p>
+
+<p>The loss is $\mathcal{L} = -\log P(y \mid x)$, differentiable through the recursion. Cost: $O(T \cdot |y'|)$.</p>
+
+<div class="widget">
+  <div class="widget-title">🪜 Widget — CTC alignment lattice</div>
+  <p>The target "CAT" has extended form "_C_A_T_". Each row of the lattice is one position of the extended target; each column is one encoder frame. A valid alignment is a monotonic path from a top cell to a bottom cell. Click cells to highlight a path.</p>
+  <div id="ctc-widget"></div>
+  <div class="widget-caption">
+    The forward algorithm sums probabilities of <em>all</em> paths through the lattice. The legal moves from $(t-1, s)$ are: stay at $s$, move to $s+1$ (next extended position), or skip-the-blank to $s+2$ (only if non-blank and not preceded by the same label). The forward variable $\alpha_t(s)$ at each cell is the total probability mass flowing through it.
+  </div>
+</div>
+
+<h3>Decoding at inference</h3>
+
+<p>Two common decoders:</p>
+<ul>
+<li><strong>Greedy</strong>: at each frame pick $\arg\max_v P(v \mid x_t)$, then apply $\mathcal{B}$. Linear in $T$. Surprisingly good if the model is well-trained.</li>
+<li><strong>Beam search</strong>: maintain a beam of partial transcripts, expanding by one frame at a time. Optionally fuse with a language model for an extra few WER points.</li>
+</ul>
+
+<h3>The CTC conditional independence assumption</h3>
+
+<p>Here is the practical consequence of the assumption that frames are independent given $x$: the CTC model has no notion that "<code>I have for apples</code>" is grammatically broken and should be "<code>I have four apples</code>". The acoustic evidence supports both "for" and "four" equally well; the model picks whichever the encoder happened to score slightly higher, with no contextual reasoning.</p>
+
+<p>You can compensate by adding an external language model at decoding time (KenLM n-gram, a Transformer LM, etc.) via <em>shallow fusion</em>:</p>
+
+$$\text{score}(y) = \log P(y \mid x) + \lambda \log P_{\text{LM}}(y) + \alpha |y|$$
+
+<p>The $\lambda$ term weights the LM; the $|y|$ length-penalty $\alpha$ stops the LM from biasing toward short hypotheses. Done well, this often gets CTC within a couple of points WER of an RNN-T model. With strong encoders (scale, SSL pretraining), CTC's conditional-independence gap shrinks further. RNN-T sidesteps the problem by adding a separate sub-network that explicitly models the output language — covered next.</p>
+
+<p>Decoding options for CTC range from <em>greedy</em> (argmax per frame, collapse) → <em>prefix beam search</em> (track separate blank/non-blank prefix probabilities) → <em>WFST decoding</em> (compose H ∘ C ∘ L ∘ G transducers with an n-gram LM and Viterbi-decode the composed graph) → <em>neural LM rescoring</em> on the n-best list or lattice. Production Kaldi-style ASR systems live in the WFST world; modern Parakeet/NeMo deployments tend to use greedy + optional shallow fusion for throughput, or prefix beam + n-gram for accuracy-critical pipelines.</p>
+
+<div class="refs">
+  <strong>📄 In <code>./papers/</code></strong>:
+  <ul style="margin:0.4em 0">
+    <li><code>05_CTC_Graves2006.pdf</code> — the original CTC paper. Sections 3–4 derive the forward-backward.</li>
+    <li>The <a href="https://distill.pub/2017/ctc/">Awni Hannun Distill article on CTC</a> is the single best supplementary read. Visual, animated, very clear.</li>
+  </ul>
+</div>
+
+<h2 id="ch-rnnt">22. RNN-Transducer — the lattice grows a second axis</h2>
+
+<p>The fundamental insight of the RNN-Transducer (Graves 2012) is: <strong>add a second network that models the output sequence directly</strong>, so the model can learn $P(y_u \mid y_{<u})$ — the language-model dependencies that CTC throws away.</p>
+
+<h3>The three networks</h3>
+
+<div class="diagram">
+                              encoder frame at time t
+                                       │
+audio ──▶  Encoder  ──▶  f_t  ─────────┐
+                                       ▼
+                                    ╭──────╮
+                                    │ Joint│ ──▶ logits over V ∪ {blank}
+                                    │ Net  │
+                                    ╰──────╯
+                                       ▲
+                       g_u  ───────────┘
+                        │
+                        │
+y_{u-1} ──▶ Prediction Net (LSTM)
+            (sees only previously emitted non-blank tokens)
+</div>
+
+<p>So we have:</p>
+<ul>
+<li><strong>Encoder</strong> $f: \text{audio} \to \mathbb{R}^{T \times d}$ — the FastConformer.</li>
+<li><strong>Prediction network</strong> $g: y_{<u} \to \mathbb{R}^d$ — usually a 1-layer LSTM. Reads previous emitted non-blank tokens.</li>
+<li><strong>Joint network</strong> $J(f_t, g_u) \in \mathbb{R}^{|V|+1}$ — fuses the two, typically as $W_{\text{out}} \cdot \tanh(W_e f_t + W_p g_u + b)$.</li>
+</ul>
+
+<div class="callout">
+  <div class="callout-title">Training vs inference: where does <code>g<sub>u</sub></code> come from?</div>
+  During <strong>training</strong>, $g_u$ is computed by teacher-forcing: the prediction network reads the ground-truth prefix $y_{&lt;u}$ from the reference transcript. The forward-backward sums over all valid alignments of that fixed reference. During <strong>inference</strong>, $g_u$ is computed from the model's <em>own</em> emitted prefix so far — a distribution shift relative to training. This is the same exposure-bias problem you see in autoregressive language modelling. It is one reason decoder details (beam search, label-looping, max-symbols-per-step guards) matter so much.
+</div>
+
+<h3>The lattice</h3>
+
+<p>Instead of CTC's 1D path through $T$ frames, RNN-T defines a 2D <strong>lattice</strong>: $T$ encoder frames on one axis, $U+1$ output positions on the other (the $+1$ is because we start before any token has been emitted).</p>
+
+<p>From cell $(t, u)$ the joint network gives a distribution over $V \cup \{\varnothing\}$. There are two kinds of transitions:</p>
+<ul>
+<li><strong>Emit blank</strong> with probability $P(\varnothing \mid t, u)$: $(t, u) \to (t+1, u)$. Move forward in time without emitting a token.</li>
+<li><strong>Emit token $y_{u+1}$</strong> with probability $P(y_{u+1} \mid t, u)$: $(t, u) \to (t, u+1)$. Emit the next target token without advancing time.</li>
+</ul>
+
+<p>Note that emitting a token does <em>not</em> advance time — you can emit multiple tokens at the same encoder frame, useful for fast speech or BPE wordpieces.</p>
+
+<div class="widget">
+  <div class="widget-title">🕸 Widget — RNN-T lattice walker</div>
+  <p>Target: "CAT" (U=3 tokens). T=8 encoder frames. Click the start cell, then trace a valid path by clicking adjacent cells (right = blank-advance time, up = emit-token-advance-target). Each cell's value shows the probability mass flowing through it.</p>
+  <div id="rnnt-widget"></div>
+  <div class="widget-caption">
+    A valid alignment is any monotonic path from $(0,0)$ to $(T, U)$. The number of valid paths grows quickly — even this tiny 8×4 lattice has $\binom{8+3}{3} = 165$ valid paths. The forward-backward algorithm computes the total probability efficiently.
+  </div>
+</div>
+
+<h3>The forward-backward</h3>
+
+<p>The forward variable $\alpha(t, u)$ is the total probability of reaching cell $(t, u)$. The recursion is:</p>
+
+$$\alpha(t, u) = \alpha(t-1, u) \cdot P(\varnothing \mid t-1, u) + \alpha(t, u-1) \cdot P(y_u \mid t, u-1)$$
+
+<p>with base case $\alpha(0, 0) = 1$. The total transcript probability is:</p>
+
+$$P(y \mid x) = \alpha(T, U) \cdot P(\varnothing \mid T, U)$$
+
+<p>Cost: $O(T \cdot U \cdot |V|)$. The $|V|$ factor comes from computing the joint network at each lattice cell, which gives a full vocabulary distribution. For a 15-second training utterance with $T \approx 190$, $U \approx 30$, $|V| = 1024$, that's already ~6M joint operations per training example; for the longer-audio configs with $T$ in the thousands the joint tensor explodes. <strong>This is why RNN-T is memory-hungry and why the NeMo config has <code>fused_batch_size</code></strong>, which subdivides the batch through the joint network to bound activation memory. Memory-saving variants — fused TDT loss, sampled/pruned RNN-T (k2-style), bf16 — exist precisely to push this further.</p>
+
+<h3>Greedy inference</h3>
+
+<p>The greedy decoder for RNN-T:</p>
+
+<pre><code>t = 0
+u = 0
+hypothesis = []
+g = prednet(SOS)
+while t &lt; T:
+    z = joint(f[t], g)
+    v = argmax(z)
+    if v == BLANK:
+        t += 1
+    else:
+        hypothesis.append(v)
+        g = prednet_step(g, v)
+        u += 1
+return hypothesis</code></pre>
+
+<p>Notice: time only advances when blank is emitted. When a non-blank is emitted, we stay at the same encoder frame and ask the joint network again with the updated prediction-network state. This is what lets the model emit multiple tokens per frame.</p>
+
+<h3>Why this is better than CTC</h3>
+
+<p>The prediction network gives the joint distribution $P(y_u \mid y_{<u}, x)$ — full conditional dependence on previously emitted tokens. The model learns an internal language model as part of training. Empirically, a Parakeet RNN-T at 0.6B parameters beats a Parakeet CTC at 0.6B parameters by 1–2 WER points without any external LM.</p>
+
+<div class="refs">
+  <strong>📄 In <code>./papers/</code></strong>:
+  <ul style="margin:0.4em 0">
+    <li><code>04_RNNT_Graves2012_1211.3711.pdf</code> — the original RNN-T paper. Section 2 has the forward-backward.</li>
+    <li><code>13_StreamingRNNT_Mobile_1811.06621.pdf</code> — the He et al. paper that revived RNN-T for production. Useful for understanding the practical streaming concerns.</li>
+    <li>Loren Lugosch's <a href="https://lorenlugosch.github.io/posts/2020/11/transducer/">"Sequence-to-Sequence Learning with Transducers"</a> blog post — has explicit Python code for the forward-backward.</li>
+  </ul>
+</div>
+
+<h2 id="ch-tdt">23. TDT — predicting tokens <em>and</em> durations</h2>
+
+<p>The Token-and-Duration Transducer (Xu et al. 2023) is a strict generalisation of RNN-T. Where RNN-T emits one symbol (token or blank) per joint-network call and only advances time on blanks, TDT also emits a <em>duration</em> $d \in \{0, 1, 2, \ldots, D_{\max}\}$ telling the decoder how many frames to skip.</p>
+
+<h3>The factorised joint</h3>
+
+<p>Where RNN-T's joint network outputs a single distribution over $V \cup \{\varnothing\}$, TDT's joint outputs <strong>two independent distributions</strong>:</p>
+
+$$P(v, d \mid t, u) = P_T(v \mid t, u) \cdot P_D(d \mid t, u)$$
+
+<p>$P_T$ is the token distribution (over $V \cup \{\varnothing\}$ exactly as in RNN-T). $P_D$ is the duration distribution (over a small set, typically $\{0, 1, 2, 3, 4\}$).</p>
+
+<p>Implementation detail: in NeMo's <code>TDTJoint</code>, the joint network's final linear layer outputs a vector of size $|V| + 1 + |D|$, which is split into two sub-vectors that are softmaxed independently. So it's literally one matrix multiplication that yields both heads.</p>
+
+<h3>The richer lattice</h3>
+
+<p>From cell $(t, u)$, the possible transitions are now:</p>
+<ul>
+<li><strong>Emit token</strong> $y_{u+1}$ with duration $d$: $(t, u) \to (t + d, u + 1)$ for any $d \in D$.</li>
+<li><strong>Emit blank</strong> with duration $d$: $(t, u) \to (t + d, u)$ for any $d \in D \setminus \{0\}$ (blanks must advance time).</li>
+</ul>
+
+<p>So instead of CTC/RNN-T's strict $(0,1)$ or $(1,0)$ moves, TDT allows arbitrary horizontal jumps. The duration distribution tells the decoder how many frames the current token "owns".</p>
+
+<div class="widget">
+  <div class="widget-title">🦘 Widget — TDT lattice with duration jumps</div>
+  <p>Same setup as the RNN-T widget but moves are now allowed to span multiple time-steps. Use the duration buttons to set how far the next jump should go.</p>
+  <div id="tdt-widget"></div>
+  <div class="widget-caption">
+    Notice how a single token+duration emission can cover a long stretch of acoustically-uninformative frames. The model learns to assign large durations to stable acoustic content and small durations to fast-changing content.
+  </div>
+</div>
+
+<h3>Forward-backward for TDT</h3>
+
+<p>The recursion (Xu et al. 2023, eq. 5–7) becomes:</p>
+
+$$\alpha(t, u) = \sum_{d \in D \setminus \{0\}} \alpha(t - d, u) \cdot P(\varnothing, d \mid t-d, u) + \sum_{d \in D} \alpha(t - d, u - 1) \cdot P(y_u, d \mid t - d, u - 1)$$
+
+<p>with $\alpha(0, 0) = 1$ and $P(y \mid x) = \alpha(T + 1, U)$ (the $+1$ shift is a notational convenience in the paper).</p>
+
+<p>The gradient derivations (paper appendix) are similar to RNN-T but with extra cross-diagonal terms because frame-skipping means paths don't all pass through the same diagonal. Numba kernels in NeMo implement this efficiently on GPU.</p>
+
+<h3>Why this is faster at inference</h3>
+
+<p>The greedy decoder for TDT:</p>
+
+<pre><code>t = 0; u = 0; hyp = []; g = prednet(SOS)
+symbols_at_t = 0
+MAX_SYMBOLS = 10                # guard against infinite loops at one frame
+
+while t &lt; T:
+    z_token, z_dur = joint(f[t], g)
+    v = argmax(z_token)
+    d = argmax(z_dur)
+
+    if v == BLANK:
+        d = max(d, 1)            # blank with d=0 is invalid: blanks must advance time
+        t += d
+        symbols_at_t = 0
+    else:
+        hyp.append(v)
+        g = prednet_step(g, v)
+        u += 1
+        t += d                   # token duration may be 0 (emit several tokens at one frame)
+        symbols_at_t = symbols_at_t + 1 if d == 0 else 0
+        if symbols_at_t >= MAX_SYMBOLS:
+            t += 1               # force time-advance to escape pathological loop
+            symbols_at_t = 0
+return hyp</code></pre>
+
+<p>Per joint-network call we advance time by $d$ frames instead of 1. Empirically the average $d$ is 2–3 for typical speech, giving the headline <strong>~2.82× inference speedup over RNN-T at equal-or-better WER</strong> reported in the TDT paper. This is one of the ingredients that lets Parakeet-TDT-0.6B-v2 reach the RTFx numbers reported on the HF OpenASR leaderboard (3380 at batch=128 in NVIDIA's published runs; other reported values from different stacks/hardware sit in the high hundreds to low thousands — always specify the configuration).</p>
+
+<h3>Two training tricks</h3>
+
+<p>The TDT paper introduces two important training stabilisations:</p>
+
+<ol>
+<li><strong>Logit under-normalisation</strong>: subtract a small constant $\sigma$ from the token log-probabilities used in the TDT loss:
+$$\log P'_T(v \mid t, u) = \log \mathrm{softmax}(h_v(t,u)) - \sigma$$
+This adds a fixed per-transition penalty, so paths that take fewer/larger-duration steps to cover the audio are favoured. It pushes the model to <em>use</em> duration skipping rather than degenerating into many duration-1 emissions. (It's not "scaling duration logits"; the modification is on the token side.)</li>
+<li><strong>Sampled loss</strong>: with probability $\omega$, compute the standard RNN-T loss (collapsing $D$ to $\{1\}$) instead of the full TDT loss for that step. Keeps the model robust to mis-predicted durations and provides a useful regulariser early in training.</li>
+</ol>
+
+<p>The TDT paper uses $\sigma$ in the 0.02–0.05 range and $\omega$ around 0.1; NeMo defaults vary by config — always check the YAML rather than copying numbers from memory.</p>
+
+<h3>Timestamps come almost for free</h3>
+
+<p>A useful side-effect: each emitted token at $(t, u)$ carries a duration $d$, so the model is implicitly saying "this token occupies frames $t$ through $t+d-1$" — at 80 ms per encoder frame, that's a token-level span in time. Aggregating BPE subwords up to words gives you word-level timestamps without running a separate forced aligner over the audio.</p>
+
+<p>Caveats worth remembering before promising clients a millisecond-accurate ASR:</p>
+<ul>
+<li>Resolution is bounded by the encoder frame rate: ~80 ms. Word boundaries inside a single encoder frame are not resolvable.</li>
+<li>Durations are <em>predictions</em>, not ground truth alignments. They reflect what the model learned, including any blank-bias / silence-collapse behaviour.</li>
+<li>Subword-to-word aggregation has to handle the SentencePiece word-start marker (▁) explicitly; punctuation tokens, whose acoustic span is ill-defined, are usually merged with the adjacent word.</li>
+<li>You should evaluate timestamp quality on a held-out set (e.g. mean absolute boundary error vs. forced alignments) before relying on them.</li>
+</ul>
+
+<p>This is still why <code>parakeet-tdt-0.6b-v2</code> can advertise word-level timestamps as a first-class feature, while attention-decoder models like Canary-1B-v2 need an auxiliary CTC head plus the NeMo Forced Aligner to get the same thing (see Canary paper §5).</p>
+
+<div class="refs">
+  <strong>📄 In <code>./papers/</code></strong>:
+  <ul style="margin:0.4em 0">
+    <li><code>02_TDT_2304.06795.pdf</code> — the TDT paper. Read sections 3 and 4 carefully; the appendix has the gradient derivations.</li>
+    <li><code>14_MultiBlankTransducer_2211.03541.pdf</code> — Huang et al., the direct predecessor (a "big blank" that covers multiple frames). TDT generalises this to per-token durations.</li>
+    <li>Speechmatics's <a href="https://www.speechmatics.com/company/articles-and-news/token-duration-transducer-tdt-explained">TDT walkthrough</a> — very readable secondary source, includes pseudocode.</li>
+  </ul>
+</div>
+
+<!-- =========================================================== -->
+<img class="part-hero" src="diagrams/06-part-vi-tokens.png" alt="Part VI — Tokens, Training, Inference: title card showing a BPE merge tree growing from individual characters to subword tokens, alongside a small training-loop diagram">
+<div class="part-title">Part VI · Tokens, training, inference</div>
+
+<h2 id="ch-bpe">24. BPE / SentencePiece tokenisation</h2>
+
+<p>"Tokens" in Parakeet are sub-word units, not characters or whole words. The tokeniser is <strong>SentencePiece</strong> (Kudo &amp; Richardson 2018) with the BPE algorithm.</p>
+
+<p>The vocabulary is built from training transcripts:</p>
+<ol>
+<li>Start with single characters as the vocabulary.</li>
+<li>Find the most common adjacent pair of tokens.</li>
+<li>Merge them into a new token. Add to vocabulary.</li>
+<li>Repeat until vocabulary reaches target size.</li>
+</ol>
+
+<p>Parakeet's English-only checkpoints (e.g. <code>parakeet-tdt-0.6b-v2</code>) use a 1024-token SentencePiece BPE vocabulary trained on the English transcript corpus. The multilingual <code>parakeet-tdt-0.6b-v3</code> and <code>canary-1b-v2</code> checkpoints use a much larger unified vocabulary (8192 tokens) trained across all supported languages — multilingual models need more tokens because they share one vocab across many scripts. Typical entries: <code>"▁the"</code>, <code>"▁quick"</code>, <code>"ing"</code>, <code>"▁a"</code>, <code>"ed"</code>, plus all the single characters as fallback. The leading <code>▁</code> ("metaspace") symbol marks a word start in SentencePiece. (This document writes it as <code>_</code> for readability in plain text.)</p>
+
+<div class="widget">
+  <div class="widget-title">✂️ Widget — Tokeniser visualiser</div>
+  <p>Try entering a sentence. The widget will simulate BPE-style tokenisation with a small fixed vocabulary.</p>
+  <div id="bpe-widget"></div>
+  <div class="widget-caption">
+    Real SentencePiece tokenisation runs the trained <em>unigram-LM</em> or <em>BPE</em> segmenter (depending on training mode) against its merge table; this widget is a toy greedy-longest-match approximation over a hand-crafted vocabulary, only meant to convey the shape of the output. The key thing to internalise: the model never sees raw characters or whole words, only these wordpiece tokens. "Parakeet" might become <code>["▁par", "ak", "eet"]</code> or similar.
+  </div>
+</div>
+
+<p>Why subwords? Two reasons:</p>
+<ol>
+<li>You get an open vocabulary for free — any unseen word can be encoded as a sequence of known subwords.</li>
+<li>It reduces $U$ (the output sequence length). For RNN-T whose memory cost is $O(T \cdot U \cdot |V|)$, halving $U$ halves memory. Whole-word vocabs would have $|V| \sim 10^5$ and explode the joint network.</li>
+</ol>
+
+<h2 id="ch-training">25. The training pipeline end-to-end</h2>
+
+<p>Here is what happens during one training step for Parakeet-TDT:</p>
+
+<div class="diagram">
+1. Sample (audio, transcript) batch
+   audio: list of 16-kHz waveforms of varying length (typically 5–30 s for training)
+   text:  list of transcript strings
+
+2. Tokenise transcript
+   "the quick brown fox" → [thE, _qu, ick, _bro, wn, _fox] → [342, 891, 145, 622, 23, 401]
+   This is U_b token IDs per batch element.
+
+3. Preprocess audio (deterministic, no learnable params)
+   waveform → STFT → power → mel filterbank → log → per-feature norm
+   Shape: [B, 80, T_in_max]
+   Lengths kept per batch element for masking.
+
+4. Apply SpecAugment (training only)
+   Mask random frequency bands and time stretches.
+
+5. Forward through encoder
+   FastConformer: 8× subsampling stem + 24 Conformer blocks
+   Output: [B, T_max, 1024] where T_max = T_in_max / 8
+
+6. Forward through prediction net
+   For each batch element, embed the (shifted) token sequence and run through 1-layer LSTM.
+   Output: [B, U_max + 1, 1024]
+
+7. Forward through joint net
+   Compute joint(f_t, g_u) for every (t, u) in the lattice.
+   This produces the [B, T_max, U_max + 1, |V| + 1 + |D|] tensor.
+   (Memory-fused with fused_batch_size to bound this.)
+
+8. Split joint output into token logits and duration logits.
+
+9. Compute TDT loss via Numba CUDA kernel
+   Forward-backward over the lattice, returning -log P(y|x) per batch element.
+
+10. Backpropagate through everything: loss → joint → both prediction net & encoder.
+    Optimiser step (AdamW, with the special Noam-style schedule that warms up over 10k steps).
+
+11. Periodically: validation pass, log WER on dev set.
+</div>
+
+<p>Concrete training config from the <code>parakeet-tdt-0.6b-v2</code> model card / NeMo release notes (verify against the YAML before quoting in formal docs):</p>
+<ul>
+<li>Initialised from a FastConformer SSL-pretrained checkpoint (encoder is <em>not</em> trained from scratch).</li>
+<li>~150,000 supervised steps on 64×A100. If the published "~24 wall-clock hours per 10k steps" figure is right, that's ~360 wall-clock hours ≈ <strong>~960 A100-GPU-days</strong> for the supervised stage alone, excluding SSL pretraining.</li>
+<li>Then ~2,500 steps of stage-2 fine-tuning on ~500 hours of clean human-transcribed data.</li>
+<li>Trained on the <strong>Granary</strong> dataset: ~10K hours human-transcribed + ~110K hours pseudo-labelled (YouTube-Commons, YODAS, LibriLight). Total ~120K hours.</li>
+<li>Temperature-balanced corpus sampling (per-source $\alpha$ / per-language $\beta$ around 0.5).</li>
+<li><em>OOMptimizer</em> used to pack batches: it probes the maximum batch size that fits per-bucket on 80 GB so the GPU never OOMs during training. Combined with duration bucketing, this is what keeps utilisation high.</li>
+</ul>
+
+<h2 id="ch-inference">26. Inference at scale</h2>
+
+<p>Three layers of optimisation stack to produce the headline RTFx numbers:</p>
+
+<h3>Algorithmic: TDT frame-skipping</h3>
+
+<p>Already covered — duration prediction lets you advance multiple frames per joint call. ~2–3× speedup over RNN-T greedy at equal-or-better WER for typical English speech.</p>
+
+<h3>Batching: label-looping</h3>
+
+<p>Bataev et al. 2024 ("Label-looping") restructures the greedy decoder so that all batch elements take a joint-network step in lock-step, with masked updates to handle elements that emit non-blank vs. blank differently. Naive "step each element to its own next time" loops waste GPU cycles when batch elements diverge in length; label-looping recovers most of it.</p>
+
+<h3>Kernel: CUDA Graphs for exact greedy decoding</h3>
+
+<p>Galvez et al. 2024 ("Speed of light exact greedy decoding") replaces the Python-level decode loop with a captured CUDA Graph. The kernel-launch overhead that dominates short-decoder operations disappears. This alone gives ~2–3× decoder speedup on top of label-looping. A captured graph requires static shapes per launch, which is why label-looping (one joint call per batch per step) composes so well with it.</p>
+
+<p>Combined effect, as reported on the HF OpenASR leaderboard: Parakeet-TDT-0.6B-v2 on an A100 reaches RTFx 3380 at batch=128 (NVIDIA's published run; NGC has shown other values like 2940 with different software stacks). Whisper-large-v3 on similar hardware sits around RTFx 120–150 depending on the implementation. The ~20–28× ratio is real, but the absolute numbers depend on:</p>
+<ul>
+<li>Hardware (A100 vs H100 vs L40S vs T4)</li>
+<li>Batch size and the audio-duration distribution of the test set</li>
+<li>Precision (fp16 / bf16 / fp32 / int8)</li>
+<li>Decoder strategy (greedy vs beam, fused vs unfused joint)</li>
+<li>Whether I/O, audio decode, and resampling are inside the timer or excluded</li>
+<li>Whether timestamps are computed</li>
+</ul>
+<p>Always quote the configuration with the number.</p>
+
+<h3>Beam search and external LM fusion</h3>
+
+<p>Greedy decoding is usually what production deployments use, because the encoder is strong enough and beam adds latency. When you do want beam search — typically for domain-mismatched audio, low-resource languages, or LM fusion — NeMo implements several variants for transducers:</p>
+<ul>
+<li><strong>TSD</strong> (Time-Synchronous Decoding) — expand all beams one time step per iteration; can over-expand on slow speech.</li>
+<li><strong>ALSD</strong> (Alignment-Length Synchronous Decoding) — batches beams by total alignment length so all beams stay roughly aligned, much better GPU utilisation than TSD/breadth-first.</li>
+<li><strong>MAES</strong> (Modified Adaptive Expansion Search) — adaptively limits how many non-blank expansions a beam can take at a frame; the default heuristic favoured for production beam decoding.</li>
+</ul>
+<p>For CTC, the canonical variant is <em>prefix beam search</em>, which tracks separate "ends-in-blank" and "ends-in-non-blank" prefix probabilities so that beams differing only in their final blank/non-blank state can be correctly merged. Shallow fusion with an n-gram or neural LM is layered on top: $\text{score}(y) = \log P_{\text{ASR}}(y \mid x) + \lambda \log P_{\text{LM}}(y) + \alpha |y|$.</p>
+
+<p>Beam size 2 is usually enough on Parakeet-style transducers; beam 4 squeezes out maybe another 0.1–0.2 WER. Beyond that you pay latency for diminishing accuracy returns — unless you're rescoring an n-best list with a much stronger neural LM, in which case beam 16+ becomes useful.</p>
+
+<h3>Streaming / cache-aware inference (sketch)</h3>
+
+<p>Production streaming ASR cannot wait for the whole utterance before running the encoder. Parakeet's cache-aware streaming variants are FastConformer encoders trained with bounded left/right context per layer, plus an explicit attention KV-cache and a depthwise-conv cache that persist between chunks. At inference the audio is fed in fixed chunks (e.g. 80 ms × N frames); each chunk reuses the cached past state and only computes the new attention over the new query block. End-to-end emission latency is typically 80–240 ms depending on lookahead. Anything streaming-related also has to interact carefully with VAD, endpointing, and the decoder's <code>max_symbols_per_step</code> guard. The non-streaming Parakeet checkpoints don't have these caches and shouldn't be deployed for low-latency use.</p>
+
+<!-- =========================================================== -->
+<img class="part-hero" src="diagrams/07-part-vii-pipeline.png" alt="Part VII — Putting It Together: title card showing the complete ASR pipeline from microphone through mel spectrogram, encoder stack, decoder, to emitted text">
+<div class="part-title">Part VII · Putting it together</div>
+
+<h2 id="ch-pipeline">27. End-to-end pipeline visualisation</h2>
+
+<p>Here is the entire Parakeet-TDT-0.6B-v2 model in one diagram. Hover any stage for details.</p>
+
+<div class="widget">
+  <div class="widget-title">🦜 Widget — Full pipeline explorer</div>
+  <div id="full-pipeline-widget"></div>
+</div>
+
+<h3>Tensor shapes through a 10-second example</h3>
+
+<table>
+<tr><th>Stage</th><th>Shape</th><th>What lives here</th></tr>
+<tr><td>Input waveform</td><td>[1, 160000]</td><td>Float32 audio, ±1</td></tr>
+<tr><td>Mel-spectrogram</td><td>[1, 80, 1000]</td><td>Log-mel features at 10 ms hop</td></tr>
+<tr><td>After subsampling stem</td><td>[1, 125, 1024]</td><td>80 ms frames, 1024-dim</td></tr>
+<tr><td>After encoder (24 blocks)</td><td>[1, 125, 1024]</td><td>Contextualised acoustic embeddings</td></tr>
+<tr><td>Prediction net input (per step)</td><td>[1, U_so_far, 1024]</td><td>Embedded emitted tokens</td></tr>
+<tr><td>Joint output per cell</td><td>[1, 1025 + 5]</td><td>1024 vocab + 1 blank + 5 durations</td></tr>
+<tr><td>Final transcript</td><td>~25–80 tokens</td><td>Detokenised to ~25 words</td></tr>
+</table>
+
+<h2 id="ch-engineering">28. Engineering implications</h2>
+
+<p>Now that you understand the architecture, here is a consolidated view of <em>when to pick what</em>. Treat these as <em>defaults to challenge with your own benchmarks</em>, not laws of physics — model rankings shift; always re-check the HF OpenASR leaderboard, NVIDIA NGC, and your own held-out set before committing.</p>
+
+<h3>If you need lowest latency / streaming</h3>
+<p>Use a <strong>cache-aware streaming FastConformer + RNN-T or TDT</strong> (NeMo ships several "streaming_fastconformer" checkpoints). The cache-aware encoder processes chunks left-to-right with cached attention KV and depthwise-conv state; the transducer decoder is naturally streaming. End-to-end emission latency: ~80–240 ms depending on right-context lookahead. Pair with a real VAD/endpointer.</p>
+
+<h3>If you need fastest non-streaming throughput</h3>
+<p>Use <code>parakeet-tdt-0.6b-v2</code> in greedy mode with label-looping + CUDA Graphs. ~RTFx 3380 on A100 at batch=128 in the published runs. Single-pass up to ~24 minutes; chunk for longer.</p>
+
+<h3>If you need lowest WER and don't care about speed</h3>
+<p>Compare the largest current Parakeet (TDT/RNN-T 1.1B), Canary-1B-v2, Whisper-large-v3, and an n-best rescoring ensemble on <em>your own normalisation protocol</em>. Rankings depend on domain (telephony vs broadcast vs spontaneous), accent, and how you normalise punctuation/casing/numerals before computing WER. There is no static answer here.</p>
+
+<h3>If you need long-form (hours of audio)</h3>
+<p>Use the LCA + global-token variants (NeMo "long_fastconformer" / cache-aware "longform" configs). Trades a small WER hit for extending single-pass capacity to many hours. The alternative is chunking with overlap and merging hypotheses, which the NeMo <code>transcribe</code> API does automatically beyond the model's single-pass limit.</p>
+
+<h3>If you need multilingual</h3>
+<p>Use <code>parakeet-tdt-0.6b-v3</code> (25 European languages) or <code>canary-1b-v2</code> (translation-capable, attention decoder). For 99+ languages, Whisper-large-v3 still has the broadest coverage.</p>
+
+<h3>If you need word-level timestamps</h3>
+<p>Use TDT and aggregate subword durations into word spans, or use a CTC head + the NeMo Forced Aligner on AED models. TDT timestamps are at ~80 ms resolution and inherit the model's silence/blank behaviour — evaluate on your own data before trusting them for downstream tasks like captioning.</p>
+
+<h3>If you need domain adaptation (medical, legal, call-centre)</h3>
+<p>Three layers, in order of cost: (1) <em>contextual biasing / hotwording</em> at decode time (cheapest); (2) <em>n-gram LM fusion</em> trained on in-domain text (cheap); (3) <em>fine-tune</em> the model on in-domain audio-transcript pairs (most expensive, biggest gain). Avoid jumping straight to fine-tuning before trying (1) and (2).</p>
+
+<h3>Memory rules of thumb</h3>
+<ul>
+<li>Training memory is dominated by the joint network in RNN-T/TDT. Use <code>fused_batch_size</code> to bound it; consider pruned/sampled losses for further savings.</li>
+<li>Inference memory is dominated by the attention matrices in the encoder. Long audio + full attention = OOM. Switch to LCA, chunked, or cache-aware encoding.</li>
+<li>For a 0.6B model at fp16: ~1.2 GB weights, ~4–8 GB activations during inference at typical batch sizes. Production deployments often quantise to int8/fp8 via TensorRT or Riva for a further 2–4× memory cut.</li>
+</ul>
+
+<!-- =========================================================== -->
+<img class="part-hero" src="diagrams/08-part-viii-deeper.png" alt="Part VIII — Going Deeper: title card showing a row of stylised research paper spines on a shelf, with a small figure climbing steps upward suggesting further study">
+<div class="part-title">Part VIII · Going deeper</div>
+
+<h2 id="ch-readinglist">29. Reading and video list</h2>
+
+<p>Ordered roughly by dependency. Each item is one to a few hours.</p>
+
+<h3>Foundations (do these once, refer back forever)</h3>
+<ol>
+<li><strong>3Blue1Brown, <a href="https://www.youtube.com/watch?v=spUNpyF58BY">"But what is the Fourier Transform?"</a></strong> (20 min). The visual intuition for what Fourier really does. Watch this before anything else.</li>
+<li><strong>Awni Hannun, <a href="https://distill.pub/2017/ctc/">Sequence Modeling with CTC</a> (Distill, 2017)</strong>. The canonical CTC explainer. Animated. Read alongside chapter 21 here.</li>
+<li><strong>Loren Lugosch, <a href="https://lorenlugosch.github.io/posts/2020/11/transducer/">Sequence-to-Sequence Learning with Transducers</a></strong>. Python code for RNN-T forward-backward. Implement it yourself.</li>
+<li><strong>Jay Alammar, <a href="https://jalammar.github.io/illustrated-transformer/">The Illustrated Transformer</a></strong>. Best visual intro to attention and multi-head.</li>
+</ol>
+
+<h3>Canonical papers (in <code>./papers/</code>)</h3>
+<ol>
+<li>Graves et al. 2006 — CTC (<code>05_CTC_Graves2006.pdf</code>). The original. Forward-backward derivation in §4.</li>
+<li>Graves 2012 — RNN-T (<code>04_RNNT_Graves2012_1211.3711.pdf</code>). The original. §2 has the lattice math.</li>
+<li>Vaswani et al. 2017 — Transformer (<code>07_AttentionIsAllYouNeed_1706.03762.pdf</code>). The starting point for everything Conformer-shaped.</li>
+<li>Dai et al. 2019 — Transformer-XL (<code>06_TransformerXL_1901.02860.pdf</code>). §3.3 is the relpos derivation.</li>
+<li>Park et al. 2019 — SpecAugment (<code>08_SpecAugment_1904.08779.pdf</code>). §3 is the exact recipe.</li>
+<li>Gulati et al. 2020 — Conformer (<code>03_Conformer_2005.08100.pdf</code>). §2 is the block.</li>
+<li>Beltagy et al. 2020 — Longformer (<code>09_Longformer_2004.05150.pdf</code>). §3 is windowed + global attention.</li>
+<li>Rekesh et al. 2023 — FastConformer (<code>01_FastConformer_2305.05084.pdf</code>). §3 architecture, §4 measurements, §5 long-form.</li>
+<li>Xu et al. 2023 — TDT (<code>02_TDT_2304.06795.pdf</code>). §3 is the lattice; appendix has gradient derivations.</li>
+<li>Koluguri et al. 2023 — Long-form ASR (<code>11_LongFormASR_2309.09950.pdf</code>). LCA + global tokens, end-to-end.</li>
+<li>Sekoyan et al. 2025 — Parakeet-v3 / Canary-v2 (<code>12_ParakeetTDTv3_CanaryV2_2509.14128.pdf</code>). Current state of the art recipe.</li>
+</ol>
+
+<h3>Lecture series</h3>
+<ol>
+<li><strong>CMU 11-751 / 18-781 Speech Recognition &amp; Understanding</strong> (Shinji Watanabe). <a href="https://www.youtube.com/playlist?list=PLp-0K3kfddPzCnS4CqKphh-zT3aDwybDe">YouTube playlist</a>. End-to-end ASR from the modern researcher's perspective. The RNN-T lecture is gold.</li>
+<li><strong>Stanford CS224S Spoken Language Processing</strong>. Andrew Maas / Andrew Ng. Older but covers the HMM-DNN to neural transition well.</li>
+<li><strong>Daniel Povey on icefall/k2</strong>. <a href="https://www.youtube.com/watch?v=Aq3qXTLHsl4">YouTube interview series</a>. Pretty intense but you'll learn how alignment lattices really work at scale.</li>
+</ol>
+
+<h3>Code to read</h3>
+<p>Spend a weekend stepping through the NeMo source. Suggested order, all under <code>nemo/collections/asr/</code>:</p>
+<ol>
+<li><code>modules/audio_preprocessing.py</code> → <code>AudioToMelSpectrogramPreprocessor</code>. Confirm that what you read in chapter 8 matches.</li>
+<li><code>modules/conformer_encoder.py</code> → the FastConformer encoder.</li>
+<li><code>parts/submodules/conformer_modules.py</code> → the Conformer block internals (FFN, ConvModule).</li>
+<li><code>parts/submodules/multi_head_attention.py</code> → relative-position MHSA. Compare to chapter 15.</li>
+<li><code>modules/rnnt.py</code> → prediction net, joint net, and the TDT variants.</li>
+<li><code>parts/submodules/rnnt_greedy_decoding.py</code> → the greedy decoder loop (label-looping).</li>
+<li><code>parts/submodules/tdt_loop_labels_computer.py</code> → the TDT-specific frame-skipping decoder.</li>
+<li><code>losses/rnnt.py</code> → the RNN-T and TDT losses; the Numba kernels are in <code>parts/numba/rnnt_loss/</code>.</li>
+</ol>
+
+<p>If you can step through <code>ASRModel.transcribe(["audio.wav"])</code> in a debugger and predict every tensor shape, you are at engineering depth.</p>
+
+<h3>Hands-on exercises (in order)</h3>
+
+<p>The six exercises below are <strong>fully scaffolded</strong> as university-tutorial-style sub-projects under <a href="./exercises/"><code>./exercises/</code></a>. Each ships with a step-by-step <code>README.md</code>, a <code>starter.py</code> with explicit TODO blocks, <code>pytest</code> sanity checks that turn green when you've implemented each piece correctly, a <code>reference.py</code> worked solution to consult only when stuck, and a <code>notes.md</code> with optional harder extensions.</p>
+
+<table>
+<tr><th>#</th><th>Folder</th><th>Time budget</th><th>What you build</th></tr>
+<tr><td>1</td><td><a href="./exercises/01-stft-from-scratch/"><code>01-stft-from-scratch/</code></a></td><td>~1–2 h</td><td>DFT, Hann window, STFT, mel filterbank, full <code>waveform → log-mel</code> pipeline in pure NumPy. Cross-checked against SciPy / librosa.</td></tr>
+<tr><td>2</td><td><a href="./exercises/02-ctc-from-scratch/"><code>02-ctc-from-scratch/</code></a></td><td>~1 day</td><td>CTC forward, backward, loss, analytical gradient, greedy decoder, prefix beam search. Plus a runnable script that trains a tiny CNN with your loss on synthetic speech. Cross-checked against <code>torch.nn.functional.ctc_loss</code>.</td></tr>
+<tr><td>3</td><td><a href="./exercises/03-rnnt-from-scratch/"><code>03-rnnt-from-scratch/</code></a></td><td>~1 day</td><td>RNN-T forward, backward, loss, analytical gradient, greedy decoder. Cross-checked against <code>torchaudio.functional.rnnt_loss</code>.</td></tr>
+<tr><td>4</td><td><a href="./exercises/04-train-fastconformer-ctc/"><code>04-train-fastconformer-ctc/</code></a></td><td>~1 weekend</td><td>A real 30M-param FastConformer-CTC trained end-to-end on LibriSpeech-clean with NeMo. Tokenizer, Hydra config, training script, evaluator. Target: ≤10% WER on <code>test-clean</code>.</td></tr>
+<tr><td>5</td><td><a href="./exercises/05-convert-to-rnnt/"><code>05-convert-to-rnnt/</code></a></td><td>~1 day</td><td>Transplant the encoder from exercise 4, swap the CTC head for an RNN-T head, fine-tune. Quantify the ~2 WER points the prediction net gains and the ~3× decoding slowdown.</td></tr>
+<tr><td>6</td><td><a href="./exercises/06-convert-to-tdt/"><code>06-convert-to-tdt/</code></a></td><td>~1 weekend</td><td>Add 5 extra duration outputs to the joint, swap the loss to TDT, re-tune. Measure the ~2.7× decoder speedup vs RNN-T at equal WER. Extract word-level timestamps from durations.</td></tr>
+</table>
+
+<div class="callout">
+  <div class="callout-title">Workflow recipe</div>
+  Each exercise is independent: <code>cd exercises/01-stft-from-scratch; uv venv .venv; source .venv/bin/activate; uv pip install -r requirements.txt; pytest test_stft.py -v</code> — then open <code>starter.py</code> and start filling in TODOs. The tests are designed to point precisely at the TODO that's wrong when they fail. See <a href="./exercises/README.md"><code>exercises/README.md</code></a> for the full workflow.
+</div>
+
+<p>If you do all six you will have built, by hand, every component of Parakeet at small scale. That's how you get to where you can read a NeMo PR and have informed opinions.</p>
+
+<h2 id="ch-glossary">Appendix · Glossary</h2>
+
+<table>
+<tr><th>Term</th><th>Meaning</th></tr>
+<tr><td>ASR</td><td>Automatic Speech Recognition.</td></tr>
+<tr><td>WER</td><td>Word Error Rate. <code>(substitutions + insertions + deletions) / reference_words</code>. Lower is better.</td></tr>
+<tr><td>RTFx</td><td>Real Time Factor. RTFx = audio_duration / processing_duration. Higher is better. RTFx 100 means 100 s of audio processed per second of wall time.</td></tr>
+<tr><td>STFT</td><td>Short-Time Fourier Transform.</td></tr>
+<tr><td>FFT</td><td>Fast Fourier Transform — the $O(N \log N)$ algorithm for the DFT.</td></tr>
+<tr><td>Mel scale</td><td>Perceptual frequency scale, roughly log above 1 kHz.</td></tr>
+<tr><td>CTC</td><td>Connectionist Temporal Classification (Graves 2006).</td></tr>
+<tr><td>RNN-T</td><td>RNN-Transducer (Graves 2012).</td></tr>
+<tr><td>TDT</td><td>Token-and-Duration Transducer (Xu et al. 2023).</td></tr>
+<tr><td>Joint network</td><td>The sub-network in a transducer that fuses encoder and prediction-net states into per-token logits.</td></tr>
+<tr><td>Prediction network</td><td>The sub-network in a transducer that models output-output dependencies (usually a small LSTM).</td></tr>
+<tr><td>Conformer</td><td>The convolution-augmented Transformer block (Gulati 2020).</td></tr>
+<tr><td>FastConformer</td><td>Conformer with 8× subsampling and smaller convs (Rekesh 2023). The Parakeet encoder.</td></tr>
+<tr><td>MHSA</td><td>Multi-Head Self-Attention.</td></tr>
+<tr><td>Macaron</td><td>The sandwich structure with half-step FFNs around attention/conv (Lu 2019).</td></tr>
+<tr><td>SpecAugment</td><td>Frequency- and time-masking data augmentation (Park 2019).</td></tr>
+<tr><td>GLU</td><td>Gated Linear Unit: $a \odot \sigma(b)$.</td></tr>
+<tr><td>relpos</td><td>Relative positional encoding, specifically the Transformer-XL formulation.</td></tr>
+<tr><td>LCA</td><td>Limited Context Attention — windowed attention with bounded left/right context.</td></tr>
+<tr><td>Lattice</td><td>The 2D DAG of (time, output-position) cells over which transducer alignment paths flow.</td></tr>
+<tr><td>Greedy decoding</td><td>Always pick the argmax at each step. Linear in output length.</td></tr>
+<tr><td>Beam search</td><td>Maintain top-K partial hypotheses; expand each per step.</td></tr>
+<tr><td>NeMo</td><td>NVIDIA's open-source toolkit for conversational AI; ships Parakeet.</td></tr>
+<tr><td>Riva</td><td>NVIDIA's production inference SDK; deploys Parakeet with TensorRT optimisations.</td></tr>
+</table>
+
+<hr>
+
+<p style="text-align:center; color:var(--fg-muted); font-style:italic; margin: 3em 0 1em 0;">
+End of document. You are now equipped to read the NeMo source, follow the papers, and have a substantive technical conversation about modern transducer-based ASR.
+</p>
+<p style="text-align:center; color:var(--fg-faint); font-size:13px;">
+Built as a study companion for someone learning Parakeet from scratch. Issues, corrections, or improvements: edit the markdown directly.
+</p>
+
+</main>
+</div>
+
+<script>
+// =========================================================
+// TOC active-link tracking
+// =========================================================
+const navLinks = document.querySelectorAll('nav.toc a');
+const sections = Array.from(navLinks).map(a => {
+  const id = a.getAttribute('href').slice(1);
+  return { link: a, el: document.getElementById(id) };
+}).filter(s => s.el);
+
+function updateActiveTOC() {
+  const scrollY = window.scrollY + 100;
+  let active = sections[0];
+  for (const s of sections) {
+    if (s.el.offsetTop <= scrollY) active = s;
+  }
+  navLinks.forEach(a => a.classList.remove('active'));
+  if (active) active.link.classList.add('active');
+}
+window.addEventListener('scroll', updateActiveTOC, { passive: true });
+window.addEventListener('load', updateActiveTOC);
+
+// =========================================================
+// Preprocessor pipeline detail
+// =========================================================
+const ppDetail = document.getElementById('preproc-detail');
+document.querySelectorAll('#preproc-pipeline .pipeline-stage').forEach(stage => {
+  stage.addEventListener('click', () => {
+    document.querySelectorAll('#preproc-pipeline .pipeline-stage').forEach(s => s.classList.remove('active'));
+    stage.classList.add('active');
+    ppDetail.innerHTML = '<strong>' + stage.querySelector('.pipeline-stage-name').textContent + '</strong> &middot; <code>' + stage.querySelector('.pipeline-stage-shape').textContent + '</code><br>' + stage.dataset.info;
+  });
+});
+
+</script>
+<script src="widgets.js"></script>
+
+</body>
+</html>

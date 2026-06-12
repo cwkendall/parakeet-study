@@ -1,0 +1,9 @@
+# Pin to the versions tested for this exercise. Update if you know what you're doing.
+nemo_toolkit[asr]>=2.0.0
+torch>=2.1
+pytorch-lightning>=2.0
+sentencepiece>=0.1.99
+librosa>=0.10
+omegaconf>=2.3
+hydra-core>=1.3
+tensorboard>=2.14

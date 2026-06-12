@@ -9,7 +9,10 @@
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"
   onload="renderMathInElement(document.body, {delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}]});"></script>
-<script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+<!-- Plotly via jsdelivr: cdn.plot.ly serves a MIME type that modern Chrome
+     blocks with ORB (ERR_BLOCKED_BY_ORB); jsdelivr serves application/javascript. -->
+<script src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.32.0/plotly.min.js"></script>
+<link rel="icon" href="data:,">
 </head>
 <body>
 
